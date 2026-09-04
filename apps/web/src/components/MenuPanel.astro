@@ -1,0 +1,168 @@
+---
+const gauges = [
+  { label: "Session", pct: 61, detail: "2h 12m" },
+  { label: "Week", pct: 42, detail: "42% · 4d 6h" },
+  { label: "Fable", pct: 88, detail: "88% · 4d 6h" },
+];
+
+const rows = [
+  { name: "api-gateway", sub: "add rate limiting to the edge", state: "Working" },
+  { name: "docs-site", sub: "~/Developer/docs-site", state: "Idle" },
+  { name: "billing", sub: "reconcile the invoice webhook", state: "Idle" },
+  { name: "mobile-app", sub: "~/Developer/mobile-app", state: "Idle" },
+  { name: "data-pipeline", sub: "what are the next steps here?", state: "Idle" },
+];
+---
+
+<span class="panel" role="img" aria-label="The cctray menu bar panel, with usage gauges and running sessions.">
+  <span class="usage">
+    {gauges.map((g) => (
+      <span class="gauge">
+        <span class="glabel">{g.label}</span>
+        <span class="track"><span class="fill" style={`width:${g.pct}%`} /></span>
+        <span class="gdetail">{g.detail}</span>
+      </span>
+    ))}
+  </span>
+
+  <span class="row"><span>Keep Mac Awake</span><span class="sw" /></span>
+  <span class="row"><span>Pre-warm</span><span class="sw on" /></span>
+  <span class="row"><span>Attention chime</span><span class="sw on" /></span>
+
+  <span class="rule"></span>
+
+  <span class="row"><span>Account</span><span class="dim">you@example.com</span></span>
+
+  <span class="rule"></span>
+
+  <span class="sessions">
+    {rows.map((r) => (
+      <span class="srow">
+        <span class="stext">
+          <span class="sname">{r.name}</span>
+          <span class="ssub">{r.sub}</span>
+        </span>
+        <span class="sstate">
+          <span class={`dot ${r.state === "Working" ? "live" : ""}`} />{r.state}
+        </span>
+      </span>
+    ))}
+  </span>
+
+  <span class="rule"></span>
+
+  <span class="row"><span>Clean stale worktrees</span><span class="count">3</span></span>
+
+  <span class="rule"></span>
+
+  <span class="row footer"><span class="dim">Settings…</span><span class="dim">Quit</span></span>
+</span>
+
+<style>
+  .panel {
+    display: block;
+    width: 312px;
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid var(--line-strong);
+    background: oklch(0.24 0 0 / 0.76);
+    backdrop-filter: blur(24px);
+    box-shadow:
+      0 1px 1px oklch(0 0 0 / 0.2), 0 8px 16px oklch(0 0 0 / 0.3),
+      0 24px 48px oklch(0 0 0 / 0.4), 0 48px 96px oklch(0 0 0 / 0.5);
+    font-size: 13px;
+    line-height: 1.4;
+    user-select: none;
+  }
+
+  .usage {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    padding: 10px;
+    margin-bottom: 6px;
+    border-radius: 8px;
+    border: 1px solid oklch(1 0 0 / 0.06);
+    background: oklch(1 0 0 / 0.035);
+  }
+
+  .gauge { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .glabel { font-size: 11px; font-weight: 500; color: var(--muted); }
+  .track { height: 4px; border-radius: 99px; background: var(--line); overflow: hidden; }
+  .fill { display: block; height: 100%; border-radius: 99px; background: var(--gauge); }
+  .gdetail { font-family: var(--mono); font-size: 10.5px; white-space: nowrap; }
+
+  .sessions { display: block; }
+
+  .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px;
+    border-radius: 6px;
+  }
+  .row.footer { padding-top: 2px; font-size: 12.5px; }
+
+  .dim { color: var(--dim); }
+
+  .count {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    padding: 2px 6px;
+    border-radius: 99px;
+    background: oklch(1 0 0 / 0.08);
+  }
+
+  .rule { display: block; height: 1px; margin: 6px 4px; background: var(--line); }
+
+  .sw {
+    width: 26px;
+    height: 15px;
+    border-radius: 99px;
+    background: var(--line-strong);
+    position: relative;
+    flex: none;
+  }
+  .sw::after {
+    content: "";
+    position: absolute;
+    inset: 2px auto 2px 2px;
+    width: 11px;
+    border-radius: 99px;
+    background: oklch(0.86 0 0);
+  }
+  .sw.on { background: oklch(1 0 0 / 0.34); }
+  .sw.on::after { inset: 2px 2px 2px auto; background: oklch(1 0 0); }
+
+  .srow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 34px;
+    padding: 0 6px;
+    border-radius: 6px;
+  }
+  .srow:nth-child(1) { background: oklch(1 0 0 / 0.06); }
+  .stext { display: flex; flex-direction: column; min-width: 0; gap: 1px; }
+  .sname { font-size: 12px; line-height: 1.2; }
+  .ssub {
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .sstate {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 99px; background: oklch(1 0 0 / 0.3); }
+  .dot.live { background: var(--green); }
+</style>

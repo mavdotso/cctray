@@ -1,0 +1,45 @@
+---
+import MenuPanel from "./MenuPanel.astro";
+---
+
+<span class="peek"><slot /><span class="peek-panel" aria-hidden="true"><MenuPanel /></span></span>
+
+<style>
+  .peek {
+    text-decoration: underline dotted;
+    text-decoration-color: var(--dim);
+    text-underline-offset: 4px;
+    cursor: help;
+  }
+
+  /* Positioned against .column, not the word, so the panel always lands in
+     the empty gutter beside the text instead of wherever the word wrapped. */
+  .peek-panel {
+    position: absolute;
+    right: calc(100% + 48px);
+    top: 50%;
+    z-index: 10;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-50%) translateX(-6px);
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+    pointer-events: none;
+  }
+
+  .peek:hover .peek-panel {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(-50%);
+  }
+
+  /* Below this the gutter cannot hold a 312px panel, and a touch device has
+     no hover to trigger it. */
+  @media (max-width: 1200px), (hover: none) {
+    .peek-panel { display: none; }
+    .peek { text-decoration: none; cursor: inherit; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .peek-panel { transition: none; transform: translateY(-50%); }
+  }
+</style>

@@ -1,0 +1,66 @@
+---
+import Base from "../layouts/Base.astro";
+import Logo from "../components/Logo.astro";
+import Pill from "../components/Pill.astro";
+import GithubMark from "../components/GithubMark.astro";
+import ClaudeMark from "../components/ClaudeMark.astro";
+import Peek from "../components/Peek.astro";
+import { site } from "../config";
+---
+
+<Base
+  title="cctray — every Claude Code session in your menu bar"
+  description="A tiny macOS utility for Claude Code. Usage limits, running sessions, attention chimes, and stale worktree cleanup. Free and open source."
+>
+  <div class="shell">
+    <div class="column">
+      <div class="reveal" style="--delay: 0ms"><Logo /></div>
+
+      <h1 class="sr-only">cctray — every Claude Code session in your menu bar</h1>
+
+      <div class="prose">
+        <p class="lead reveal" style="--delay: 80ms">
+          <Peek>cctray</Peek> is a tiny utility for{" "}
+          <Pill href="https://claude.com/claude-code"><ClaudeMark slot="icon" />Claude Code</Pill>
+        </p>
+
+        <p class="reveal" style="--delay: 160ms">
+          See your usage limits and every session you have running, including the
+          one waiting on an answer. Get a chime when Claude stops, keep your Mac
+          awake while sessions run, and delete stale git worktrees.
+        </p>
+
+        <p class="reveal" style="--delay: 240ms">
+          <Pill href={site.repo}><GithubMark slot="icon" />GitHub</Pill>
+        </p>
+      </div>
+
+      <div class="reveal made" style="--delay: 320ms">
+        <a class="icon" href={site.repo} target="_blank" rel="noopener noreferrer" aria-label="cctray on GitHub">
+          <GithubMark size={16} />
+        </a>
+        <span class="made-by">Made by <a class="link" href="https://mav.so">mav</a>.</span>
+      </div>
+    </div>
+  </div>
+</Base>
+
+<style>
+
+  .made { display: flex; align-items: center; gap: 10px; }
+
+  .icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin-left: -6px;
+    border-radius: 6px;
+    color: var(--dim);
+    transition: background-color 0.15s, color 0.15s;
+  }
+  .icon:hover { background: var(--surface); color: var(--fg); }
+
+  .made-by { font-size: 14px; color: var(--dim); }
+</style>

@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- Source for public/og.png. Re-render with scripts/og.sh after editing. -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" />
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    width: 1200px; height: 630px; display: flex; align-items: center;
+    padding: 0 96px;
+    background-color: oklch(0.14 0 0);
+    background-image: radial-gradient(circle, oklch(1 0 0 / 0.04) 1px, transparent 1px);
+    background-size: 20px 20px;
+    color: oklch(0.98 0 0);
+    font-family: Geist, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .stack { display: flex; flex-direction: column; gap: 28px; }
+  .name { font-size: 76px; font-weight: 600; letter-spacing: -0.03em; line-height: 1; }
+  .tag { font-size: 34px; font-weight: 400; color: oklch(0.68 0 0); line-height: 1.3; max-width: 20ch; }
+  .foot { font-size: 22px; color: oklch(0.55 0 0); }
+</style>
+</head>
+<body>
+  <div class="stack">
+    <svg width="88" height="88" viewBox="0 0 48 48">
+      <rect width="48" height="48" rx="11" fill="oklch(0.26 0 0)" />
+      <rect x="0.5" y="0.5" width="47" height="47" rx="10.5" fill="none" stroke="oklch(1 0 0 / 0.12)" />
+      <g fill="none" stroke="oklch(0.98 0 0)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="13.5,15 22.5,24 13.5,33" />
+        <line x1="27" y1="33" x2="34.5" y2="33" />
+      </g>
+    </svg>
+    <div class="name">cctray</div>
+    <div class="tag">Every Claude Code session in your menu bar.</div>
+    <div class="foot">macOS · free and open source</div>
+  </div>
+</body>
+</html>

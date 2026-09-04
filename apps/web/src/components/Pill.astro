@@ -1,0 +1,54 @@
+---
+interface Props { href?: string }
+const { href } = Astro.props;
+const external = href?.startsWith("http");
+---
+
+<a
+  class="pill"
+  href={href}
+  target={external ? "_blank" : undefined}
+  rel={external ? "noopener noreferrer" : undefined}
+>
+  <span class="pill-icon"><slot name="icon" /></span><slot /><svg
+    class="pill-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+    stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
+  ><path d="M7 17 17 7M8 7h9v9" /></svg>
+</a>
+
+<style>
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 10px;
+    border-radius: 99px;
+    background: var(--surface);
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    text-decoration: none;
+    transition: background-color 0.15s;
+  }
+  .pill:hover { background: var(--surface-hover); }
+
+  .pill-icon { display: inline-flex; align-items: center; margin-right: 6px; flex: none; }
+  .pill-icon:empty { display: none; }
+
+  /* Collapsed to zero width so it costs no space until hover, then grows the
+     pill and pushes the text after it. */
+  .pill-arrow {
+    width: 0;
+    height: 12px;
+    margin-left: 0;
+    opacity: 0;
+    overflow: hidden;
+    flex: none;
+    transform: translateX(-3px);
+    transition: width 0.2s ease, margin 0.2s ease, opacity 0.2s ease, transform 0.2s ease;
+  }
+  .pill:hover .pill-arrow { width: 12px; margin-left: 4px; opacity: 0.6; transform: none; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pill-arrow { transition: none; }
+  }
+</style>

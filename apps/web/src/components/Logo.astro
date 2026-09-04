@@ -1,0 +1,13 @@
+---
+interface Props { size?: number }
+const { size = 48 } = Astro.props;
+---
+
+<svg width={size} height={size} viewBox="0 0 48 48" role="img" aria-label="cctray">
+  <rect width="48" height="48" rx="11" fill="oklch(0.26 0 0)" />
+  <rect x="0.5" y="0.5" width="47" height="47" rx="10.5" fill="none" stroke="oklch(1 0 0 / 0.12)" />
+  <g fill="none" stroke="oklch(0.98 0 0)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <polyline points="13.5,15 22.5,24 13.5,33" />
+    <line x1="27" y1="33" x2="34.5" y2="33" />
+  </g>
+</svg>

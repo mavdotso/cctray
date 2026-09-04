@@ -1,0 +1,7 @@
+.build*/
+build/
+dist/
+node_modules/
+.astro/
+.DS_Store
+.env*
