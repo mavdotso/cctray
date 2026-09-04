@@ -119,6 +119,7 @@ struct SettingsView: View {
             NSApp.activate(ignoringOtherApps: true)
             if !CueSynth.names.contains(chime) { chime = CueSynth.defaultName }
             refreshNotifStatus()
+            dropInitialFocus()
         }
     }
 }
@@ -137,6 +138,14 @@ extension SettingsView {
         panel.directoryURL = URL(fileURLWithPath: TerminalLauncher.sessionDirectory ?? NSHomeDirectory())
         if panel.runModal() == .OK, let url = panel.url {
             sessionDir = url.path
+        }
+    }
+
+    /* AppKit focuses the first text field on open; nothing should be focused. */
+    private func dropInitialFocus() {
+        DispatchQueue.main.async {
+            NSApp.windows.first { $0.title.contains("Settings") }?
+                .makeFirstResponder(nil)
         }
     }
 
