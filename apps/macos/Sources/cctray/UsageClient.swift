@@ -69,11 +69,18 @@ struct Usage: Decodable {
 }
 
 enum UsageParser {
+    /* The API sends microseconds. Older Foundation parses them without being
+       asked; newer Foundation rejects them unless the style says so. */
+    static func parseDate(_ s: String) -> Date? {
+        (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(s))
+            ?? (try? Date.ISO8601FormatStyle().parse(s))
+    }
+
     static func parse(_ data: Data) throws -> Usage {
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .custom { d in
             let s = try d.singleValueContainer().decode(String.self)
-            guard let date = try? Date.ISO8601FormatStyle().parse(s) else {
+            guard let date = parseDate(s) else {
                 throw DecodingError.dataCorruptedError(
                     in: try d.singleValueContainer(),
                     debugDescription: "Bad date: \(s)")

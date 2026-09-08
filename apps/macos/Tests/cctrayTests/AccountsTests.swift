@@ -94,6 +94,15 @@ final class RefreshReasonTests: XCTestCase {
     }
 }
 
+final class DateParsingTests: XCTestCase {
+    func testAcceptsTheMicrosecondsTheApiActuallySends() {
+        XCTAssertNotNil(UsageParser.parseDate("2026-09-06T06:50:00.000000Z"))
+        XCTAssertNotNil(UsageParser.parseDate("2026-09-06T06:50:00.123Z"))
+        XCTAssertNotNil(UsageParser.parseDate("2026-09-06T06:50:00Z"))
+        XCTAssertNil(UsageParser.parseDate("not a date"))
+    }
+}
+
 final class ExpiryTests: XCTestCase {
     func testExpiryIsReadAsMillisecondsSinceEpoch() {
         let past = ["expiresAt": (Date().timeIntervalSince1970 - 60) * 1000]
