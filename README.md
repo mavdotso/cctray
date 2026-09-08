@@ -24,10 +24,12 @@ Requires macOS 14 or later.
 
 ## Installing
 
-Build from source. There is no binary download yet.
+Build from source. There is no binary download yet. This checks out the app
+only, not the website:
 
 ```sh
-git clone https://github.com/mavdotso/cctray.git && cd cctray \
+git clone --filter=blob:none --sparse https://github.com/mavdotso/cctray.git \
+  && cd cctray && git sparse-checkout set apps/macos \
   && apps/macos/Scripts/build-app.sh \
   && open apps/macos/build/cctray.app
 ```
@@ -53,13 +55,19 @@ removes the hook.
 
 ## Privacy
 
-cctray talks to exactly one network endpoint,
-`api.anthropic.com/api/oauth/usage`, to read your own usage numbers. It reuses
-the OAuth token Claude Code already stores — `~/.claude/.credentials.json`
-where Claude Code keeps one, otherwise the `Claude Code-credentials` login
-keychain item. All keychain reads and writes go through `/usr/bin/security`,
-so the app's location never matters to the keychain. cctray never writes a
-token of its own.
+cctray talks to two network endpoints, both Anthropic's:
+
+- `api.anthropic.com/api/oauth/usage` reads your own usage numbers.
+- `console.anthropic.com/v1/oauth/token` renews an expired login, so the
+  switcher can show usage for an account you are not currently using. cctray
+  only calls it when a saved token has expired.
+
+It reuses the OAuth token Claude Code already stores —
+`~/.claude/.credentials.json` where Claude Code keeps one, otherwise the
+`Claude Code-credentials` login keychain item. A saved account profile keeps
+its own copy in a `cctray-profile-` keychain item, and a renewed token is
+written back to it. All keychain reads and writes go through
+`/usr/bin/security`, so the app's location never matters to the keychain.
 Nothing else leaves your Mac.
 
 ## Repository layout

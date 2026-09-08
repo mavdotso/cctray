@@ -17,6 +17,9 @@ git clone https://github.com/mavdotso/cctray.git && cd cctray \
   && open apps/macos/build/cctray.app
 ```
 
+To skip the website, add `--filter=blob:none --sparse` to the clone and then
+`git sparse-checkout set apps/macos`. The README tells users to do this.
+
 `swift run` does not work: the app needs a real bundle for notifications. Always
 use the build script. It signs with a Developer ID certificate when one is in
 your keychain, otherwise with an Apple Development certificate, otherwise ad hoc.
@@ -36,9 +39,9 @@ optional. See the README for what each one unlocks.
 ```
 apps/macos/Sources/cctray   the app, one file per feature
 apps/macos/Scripts          build-app.sh and the icon generator
+apps/macos/Tests            the checks CI runs
 apps/web                    the website, deployed by Vercel
-.github/workflows/ci.yml    release build of the app
-vercel.json                 how Vercel builds and serves apps/web
+.github/workflows/ci.yml    builds both apps and runs the checks
 ```
 
 Every feature lives in one file: `Accounts.swift`, `Attention.swift`,
@@ -65,7 +68,7 @@ Every feature lives in one file: `Accounts.swift`, `Attention.swift`,
 2. Build the app with `build-app.sh` and run it. Say in the pull request what you
    tried and what you saw.
 3. Open a pull request. CI must be green: it builds the app in release mode on
-   macOS.
+   macOS and runs `swift test`.
 4. One change per pull request. Keep the description to what changed and why.
 
 `main` is protected: no force pushes, no deletions, and CI has to pass before a

@@ -37,6 +37,28 @@ struct Usage: Decodable {
         case limits
     }
 
+    struct TopLimit { let label: String, percent: Double, resetsAt: Date? }
+
+    static func windowLabel(_ group: String) -> String {
+        switch group {
+        case "session": return "5h"
+        case let g where g.hasPrefix("weekly"): return "week"
+        case let g where g.hasPrefix("monthly"): return "month"
+        default: return group
+        }
+    }
+
+    /* The switcher has room for one number, so show the limit that binds first. */
+    var topLimit: TopLimit {
+        if let top = limits?.max(by: { $0.percent < $1.percent }) {
+            return TopLimit(label: Self.windowLabel(top.kind),
+                            percent: top.percent, resetsAt: top.resetsAt)
+        }
+        return sevenDay.utilization > fiveHour.utilization
+            ? TopLimit(label: "week", percent: sevenDay.utilization, resetsAt: sevenDay.resetsAt)
+            : TopLimit(label: "5h", percent: fiveHour.utilization, resetsAt: fiveHour.resetsAt)
+    }
+
     var modelLimit: (label: String, window: UsageWindow)? {
         limits?.lazy.compactMap { l -> (String, UsageWindow)? in
             guard l.kind == "weekly_scoped",
@@ -47,11 +69,18 @@ struct Usage: Decodable {
 }
 
 enum UsageParser {
+    /* The API sends microseconds. Older Foundation parses them without being
+       asked; newer Foundation rejects them unless the style says so. */
+    static func parseDate(_ s: String) -> Date? {
+        (try? Date.ISO8601FormatStyle(includingFractionalSeconds: true).parse(s))
+            ?? (try? Date.ISO8601FormatStyle().parse(s))
+    }
+
     static func parse(_ data: Data) throws -> Usage {
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .custom { d in
             let s = try d.singleValueContainer().decode(String.self)
-            guard let date = try? Date.ISO8601FormatStyle().parse(s) else {
+            guard let date = parseDate(s) else {
                 throw DecodingError.dataCorruptedError(
                     in: try d.singleValueContainer(),
                     debugDescription: "Bad date: \(s)")
@@ -72,10 +101,9 @@ enum UsageParser {
     }
 }
 
-enum UsageFetchError: Error { case noToken, http(Int) }
+enum UsageFetchError: Error { case http(Int) }
 
-func fetchUsage() async throws -> (Usage, Data) {
-    guard let token = ClaudeKeychain.accessToken() else { throw UsageFetchError.noToken }
+func fetchUsage(token: String) async throws -> (Usage, Data) {
     var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!)
     req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
@@ -112,18 +140,19 @@ final class UsageModel: ObservableObject {
     func refresh(force: Bool = false, retrying: Bool = false) async -> Outcome {
         guard Date() >= backoffUntil else { return .skipped }
         guard force || usage == nil || Date().timeIntervalSince(lastSuccess) >= 60 else { return .skipped }
+        guard let token = ClaudeKeychain.accessToken() else {
+            usage = nil
+            authFailed = true
+            return .failed
+        }
         do {
-            let (fetched, data) = try await fetchUsage()
+            let (fetched, data) = try await fetchUsage(token: token)
             usage = fetched
             lastSuccess = Date()
             UserDefaults.standard.set(data, forKey: PrefKey.usageCache)
             authFailed = false
             isStale = false
             return .fetched
-        } catch UsageFetchError.noToken {
-            usage = nil
-            authFailed = true
-            return .failed
         } catch UsageFetchError.http(401) {
             ClaudeKeychain.invalidateCache()
             if !retrying { return await refresh(force: true, retrying: true) }
