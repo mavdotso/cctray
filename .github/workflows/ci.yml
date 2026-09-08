@@ -14,6 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: swift build -c release
+      - run: swift test
 
   web:
     runs-on: ubuntu-latest
