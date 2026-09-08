@@ -15,7 +15,7 @@ private func payload(session: Int, weekly: Int, scoped: Int) -> String { """
    "scope":{"model":{"id":null,"display_name":"Claude Opus 4.5"}}}]}
 """ }
 
-private let now = try! Date("2026-09-06T06:00:00.000000Z", strategy: .iso8601)
+private let now = UsageParser.parseDate("2026-09-06T06:00:00.000000Z")!
 
 private func summary(_ json: String) throws -> String {
     AccountStore.usageSummary(try UsageParser.parse(Data(json.utf8)), now: now)
