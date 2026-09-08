@@ -243,14 +243,19 @@ struct AttentionRow: View {
 struct AccountRow: View {
     @ObservedObject var accounts: AccountStore
     @State private var newName = ""
-    @State private var showingSave = false
+    @State private var editing: Edit?
+
+    enum Edit: Equatable { case save, rename(String) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Row(title: "Account", subtitle: accounts.statusText ?? accounts.currentEmail) {
+            Row(title: "Account",
+                subtitle: accounts.statusText ?? accounts.mismatch ?? accounts.currentEmail) {
                 Menu(accounts.active ?? "Choose…") {
                     ForEach(accounts.profiles, id: \.self) { name in
-                        Button(name) { accounts.activate(name) }
+                        Button(AccountStore.menuLabel(name, summary: accounts.usageByProfile[name])) {
+                            accounts.activate(name)
+                        }
                     }
                     Divider()
                     if accounts.isAddingAccount {
@@ -258,8 +263,11 @@ struct AccountRow: View {
                     } else {
                         Button("Add account…") { accounts.addAccount() }
                     }
-                    Button("Save current as profile…") { showingSave = true }
+                    if let unsaved = accounts.unsavedLogin {
+                        Button("Save current login as…") { newName = unsaved; editing = .save }
+                    }
                     if let active = accounts.active {
+                        Button("Rename \(active)…") { newName = active; editing = .rename(active) }
                         Button("Delete \(active)", role: .destructive) { accounts.delete(active) }
                     }
                 }
@@ -267,13 +275,13 @@ struct AccountRow: View {
                 .fixedSize()
             }
             .help("Applies to new sessions. Running sessions keep the current account.")
-            if showingSave {
+            if let editing {
                 HStack(spacing: 6) {
-                    TextField("Profile name", text: $newName)
+                    TextField(editing == .save ? "Profile name" : "New name", text: $newName)
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.small)
-                        .onSubmit { save() }
-                    Button("Save") { save() }
+                        .onSubmit { commit() }
+                    Button(editing == .save ? "Save" : "Rename") { commit() }
                         .controlSize(.small)
                 }
                 .padding(.horizontal, 6)
@@ -282,10 +290,14 @@ struct AccountRow: View {
         }
     }
 
-    private func save() {
-        accounts.saveCurrent(as: newName)
+    private func commit() {
+        switch editing {
+        case .save: accounts.saveCurrent(as: newName)
+        case .rename(let old): accounts.rename(old, to: newName)
+        case nil: break
+        }
         newName = ""
-        showingSave = false
+        editing = nil
     }
 }
 

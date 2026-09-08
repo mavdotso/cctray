@@ -59,6 +59,54 @@ enum Keychain {
     }
 }
 
+enum ClaudeOAuth {
+    enum RefreshResult { case ok([String: Any]), failed(String) }
+
+    static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+    static let tokenURL = URL(string: "https://console.anthropic.com/v1/oauth/token")!
+
+    static func isExpired(_ oauth: [String: Any], now: Date = Date()) -> Bool {
+        guard let ms = oauth["expiresAt"] as? Double else { return false }
+        return Date(timeIntervalSince1970: ms / 1000) <= now
+    }
+
+    /* invalid_grant is unrecoverable: the saved refresh token is spent. */
+    static func reason(code: Int, body: Data) -> String {
+        let error = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["error"]
+        let type = error as? String ?? (error as? [String: Any])?["type"] as? String
+        if type == "invalid_grant" { return "sign in again" }
+        return code == 429 ? "rate limited" : "not available"
+    }
+
+    /* The old refresh token stops working as soon as this succeeds. */
+    static func refresh(_ oauth: [String: Any]) async -> RefreshResult {
+        guard let refreshToken = oauth["refreshToken"] as? String else { return .failed("sign in again") }
+        var req = URLRequest(url: tokenURL)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "grant_type": "refresh_token",
+            "refresh_token": refreshToken,
+            "client_id": clientID,
+        ])
+        guard let (data, resp) = try? await URLSession.shared.data(for: req) else {
+            return .failed("offline")
+        }
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard code == 200 else { return .failed(reason(code: code, body: data)) }
+        guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let access = body["access_token"] as? String
+        else { return .failed("not available") }
+        var updated = oauth
+        updated["accessToken"] = access
+        if let rotated = body["refresh_token"] as? String { updated["refreshToken"] = rotated }
+        if let seconds = body["expires_in"] as? Double {
+            updated["expiresAt"] = (Date().timeIntervalSince1970 + seconds) * 1000
+        }
+        return .ok(updated)
+    }
+}
+
 enum ClaudeKeychain {
     static let service = "Claude Code-credentials"
     static let filePath = NSHomeDirectory() + "/.claude/.credentials.json"

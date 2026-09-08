@@ -49,6 +49,8 @@ final class AppState: ObservableObject {
             await sessions.refresh()
             guard !Task.isCancelled else { return }
             await usageModel.refresh()
+            guard !Task.isCancelled else { return }
+            await accounts.refreshProfileUsage()
         }
     }
 
