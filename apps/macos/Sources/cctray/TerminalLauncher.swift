@@ -42,9 +42,6 @@ enum TerminalApp: String, CaseIterable, Identifiable {
 }
 
 enum TerminalLauncher {
-    static let newSessionHotkey = "c"
-    static let newSessionHotkeyLabel = "⌘⌥C"
-
     static var sessionDirectory: String? {
         if let stored = UserDefaults.standard.string(forKey: PrefKey.sessionDir), !stored.isEmpty {
             return stored
@@ -53,21 +50,23 @@ enum TerminalLauncher {
         return FileManager.default.fileExists(atPath: dev) ? dev : nil
     }
 
-    static func sessionCommand(for dir: String?) -> String {
-        guard let dir, !dir.isEmpty else { return "claude" }
-        return "cd '" + dir.replacingOccurrences(of: "'", with: "'\\''") + "' && claude"
+    static func sessionCommand(for dir: String?, agent: CodingAgent = .claude) -> String {
+        let command = agent == .codex ? CodexAccounts.command().trimmingCharacters(in: .whitespaces) : agent.rawValue
+        guard let dir, !dir.isEmpty else { return command }
+        return "cd '" + dir.replacingOccurrences(of: "'", with: "'\\''") + "' && " + command
     }
 
-    static var sessionCommand: String { sessionCommand(for: sessionDirectory) }
+    @discardableResult
+    static func newSession(agent: CodingAgent) -> String? {
+        open(sessionCommand(for: sessionDirectory, agent: agent), in: .selected)
+    }
+
+    @discardableResult
+    static func codexLogin() -> String? { open(CodexAccounts.command("login"), in: .selected) }
 
     static func appleScriptLiteral(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-    }
-
-    @discardableResult
-    static func newSession(in app: TerminalApp = .selected) -> String? {
-        open(sessionCommand, in: app)
     }
 
     static let loginCommand = "claude auth login"

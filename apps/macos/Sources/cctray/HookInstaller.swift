@@ -93,6 +93,11 @@ enum HookInstaller {
         }
         let current = fm.contents(atPath: claudeSettingsPath) ?? Data("{}".utf8)
         let updated = enabled ? try install(into: current) : try remove(from: current)
+        if enabled {
+            try fm.createDirectory(atPath: (claudeSettingsPath as NSString).deletingLastPathComponent,
+                                   withIntermediateDirectories: true)
+        }
+        if !enabled && !fm.fileExists(atPath: claudeSettingsPath) { return }
         try updated.write(to: URL(fileURLWithPath: claudeSettingsPath), options: .atomic)
     }
 }

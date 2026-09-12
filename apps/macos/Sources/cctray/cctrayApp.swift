@@ -1,16 +1,16 @@
 import SwiftUI
-import Combine
 
 @MainActor
 final class AppState: ObservableObject {
     let awake = AwakeController()
-    let usageModel = UsageModel()
+    var usageModel: UsageModel { accounts.usageModel }
+    var codex: CodexModel { codexAccounts.model }
+    let codexAccounts = CodexAccounts()
     let preWarm = PreWarmController()
     let attention = AttentionCenter()
     let sessions = SessionModel()
     let worktrees = WorktreeModel()
     let accounts = AccountStore()
-    private var bag = Set<AnyCancellable>()
     private var menuTask: Task<Void, Never>?
     @Published var launchError: String?
 
@@ -18,20 +18,14 @@ final class AppState: ObservableObject {
         for key in ProcessInfo.processInfo.environment.keys where key.hasPrefix("CLAUDE") {
             unsetenv(key)
         }
-        accounts.usageModel = usageModel
         usageModel.startPolling()
-        preWarm.start(usageModel: usageModel)
-        usageModel.$usage
-            .receive(on: RunLoop.main)
-            .sink { [weak self] u in self?.preWarm.evaluate(usage: u) }
-            .store(in: &bag)
+        codex.start()
+        preWarm.start(usageModel: usageModel, codex: codex)
         NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
-            guard event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-                    == [.command, .option],
-                  event.charactersIgnoringModifiers?.lowercased()
-                    == TerminalLauncher.newSessionHotkey else { return }
+            guard let agent = AgentHotkey.agent(keyCode: event.keyCode,
+                modifiers: event.modifierFlags.intersection(AgentHotkey.relevantFlags).rawValue) else { return }
             Task { @MainActor [weak self] in
-                self?.launchError = TerminalLauncher.newSession()
+                self?.launchError = TerminalLauncher.newSession(agent: agent)
             }
         }
         attention.start()
@@ -40,21 +34,37 @@ final class AppState: ObservableObject {
     }
 
     func menuDidOpen() {
+        sessions.startMenuUpdates()
         attention.clearLog()
         worktrees.refresh()
-        accounts.refreshIdentity()
+        if CodingAgent.claude.isEnabled { accounts.refreshIdentity() }
         menuTask?.cancel()
         menuTask = Task { [weak self] in
             guard let self else { return }
             await sessions.refresh()
+            await codex.refresh()
+            if codex.loadedProfile == "default", let email = codex.email {
+                codexAccounts.captureCurrentLogin(email: email)
+            }
+            await codexAccounts.refreshProfileUsage()
             guard !Task.isCancelled else { return }
             await usageModel.refresh()
             guard !Task.isCancelled else { return }
-            await accounts.refreshProfileUsage()
+            if CodingAgent.claude.isEnabled { await accounts.refreshProfileUsage() }
+        }
+    }
+
+    func agentSettingsChanged() {
+        attention.updateAgents()
+        Task {
+            await sessions.refresh()
+            await usageModel.refresh(force: true)
+            await codex.refresh(force: true)
         }
     }
 
     func menuDidClose() {
+        sessions.stopMenuUpdates()
         menuTask?.cancel()
         menuTask = nil
     }
@@ -88,7 +98,8 @@ struct cctrayApp: App {
         .defaultPosition(.center)
 
         Settings {
-            SettingsView()
+            SettingsView().environmentObject(state)
         }
+        .windowResizability(.contentSize)
     }
 }

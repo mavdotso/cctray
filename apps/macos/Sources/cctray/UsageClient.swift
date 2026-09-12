@@ -115,21 +115,42 @@ func fetchUsage(token: String) async throws -> (Usage, Data) {
 
 @MainActor
 final class UsageModel: ObservableObject {
-    @Published var usage: Usage?
-    @Published var authFailed = false
-    @Published var isStale = false
+    @Published private(set) var usage: Usage?
+    @Published private(set) var authFailed = false
+    @Published private(set) var isStale = false
+    private let defaults = UserDefaults.standard
+    private var generation = 0
+    private var observedAccount = ClaudeConfig.currentEmail()
+    private(set) var loadedAccount: String?
     private var timer: Timer?
     private var backoffUntil = Date.distantPast
     private var lastSuccess = Date.distantPast
 
+    func accountChanged() {
+        generation += 1
+        observedAccount = ClaudeConfig.currentEmail()
+        ClaudeKeychain.invalidateCache()
+        usage = nil
+        loadedAccount = nil
+        authFailed = false
+        isStale = false
+        lastSuccess = .distantPast
+        backoffUntil = .distantPast
+        defaults.removeObject(forKey: PrefKey.usageCache)
+        defaults.removeObject(forKey: PrefKey.usageCacheAccount)
+    }
+
     func startPolling() {
-        if let data = UserDefaults.standard.data(forKey: PrefKey.usageCache),
+        if let account = ClaudeConfig.currentEmail(), defaults.string(forKey: PrefKey.usageCacheAccount) == account,
+           let data = defaults.data(forKey: PrefKey.usageCache),
            let cached = try? UsageParser.parse(data) {
+            loadedAccount = account
             usage = cached
             isStale = true
         }
-        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { _ in
-            Task { @MainActor in await self.refresh() }
+        timer?.invalidate()
+        timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refresh() }
         }
         Task { await refresh() }
     }
@@ -138,6 +159,10 @@ final class UsageModel: ObservableObject {
 
     @discardableResult
     func refresh(force: Bool = false, retrying: Bool = false) async -> Outcome {
+        guard CodingAgent.claude.isEnabled(in: defaults) else { return .skipped }
+        let account = ClaudeConfig.currentEmail()
+        if observedAccount != account { accountChanged() }
+        let requestGeneration = generation
         guard Date() >= backoffUntil else { return .skipped }
         guard force || usage == nil || Date().timeIntervalSince(lastSuccess) >= 60 else { return .skipped }
         guard let token = ClaudeKeychain.accessToken() else {
@@ -147,24 +172,34 @@ final class UsageModel: ObservableObject {
         }
         do {
             let (fetched, data) = try await fetchUsage(token: token)
+            guard !Task.isCancelled, requestGeneration == generation,
+                  account == ClaudeConfig.currentEmail() else { return .skipped }
+            loadedAccount = account
             usage = fetched
             lastSuccess = Date()
-            UserDefaults.standard.set(data, forKey: PrefKey.usageCache)
+            defaults.set(data, forKey: PrefKey.usageCache)
+            defaults.set(account, forKey: PrefKey.usageCacheAccount)
             authFailed = false
             isStale = false
             return .fetched
         } catch UsageFetchError.http(401) {
+            guard !Task.isCancelled, requestGeneration == generation,
+                  account == ClaudeConfig.currentEmail() else { return .skipped }
             ClaudeKeychain.invalidateCache()
             if !retrying { return await refresh(force: true, retrying: true) }
             usage = nil
             authFailed = true
             return .failed
         } catch UsageFetchError.http(429) {
+            guard !Task.isCancelled, requestGeneration == generation,
+                  account == ClaudeConfig.currentEmail() else { return .skipped }
             backoffUntil = Date().addingTimeInterval(usage == nil ? 120 : 900)
             authFailed = false
             isStale = usage != nil
             return .failed
         } catch {
+            guard !Task.isCancelled, requestGeneration == generation,
+                  account == ClaudeConfig.currentEmail() else { return .skipped }
             authFailed = false
             isStale = usage != nil
             return .failed

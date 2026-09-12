@@ -6,6 +6,7 @@ struct AttentionEvent: Equatable {
     let tty: String
     let cwd: String
     var message = ""
+    var agent: CodingAgent = .claude
 }
 
 enum AttentionParser {
@@ -15,6 +16,13 @@ enum AttentionParser {
               let raw = obj["raw"] as? [String: Any],
               raw["notification_type"] as? String != "idle_prompt"
         else { return nil }
+        if obj["provider"] as? String == "codex" {
+            guard raw["type"] as? String == "agent-turn-complete" else { return nil }
+            return AttentionEvent(tty: obj["tty"] as? String ?? "",
+                                  cwd: raw["cwd"] as? String ?? "",
+                                  message: raw["last-assistant-message"] as? String ?? "",
+                                  agent: .codex)
+        }
         return AttentionEvent(tty: obj["tty"] as? String ?? "",
                               cwd: projectRoot(cwd: raw["cwd"] as? String ?? "",
                                                transcriptPath: raw["transcript_path"] as? String ?? ""),
@@ -83,13 +91,20 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
 
     private func apply() {
         do {
-            try HookInstaller.setEnabled(isOn)
+            try HookInstaller.setEnabled(isOn && CodingAgent.claude.isEnabled)
             lastError = nil
         } catch HookInstaller.HookError.malformedSettings {
             lastError = "Chime setup failed: ~/.claude/settings.json is not valid JSON"
         } catch {
             lastError = "Chime setup failed: cannot write ~/.claude/settings.json"
         }
+        do {
+            try CodexHook.setEnabled(isOn && CodingAgent.codex.isEnabled)
+            for profile in CodexAccounts.savedProfiles {
+                try CodexHook.setEnabled(isOn && CodingAgent.codex.isEnabled, home: profile.home)
+            }
+        }
+        catch { lastError = error.localizedDescription }
         if isOn { startWatching() } else { stopWatching() }
     }
 
@@ -99,6 +114,8 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
             .requestAuthorization(options: [.alert, .sound]) { _, _ in }
         if isOn { apply() }
     }
+
+    func updateAgents() { apply() }
 
     private func startWatching() {
         stopWatching()
@@ -126,6 +143,7 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
     }
 
     private func handle(_ event: AttentionEvent) {
+        guard event.agent.isEnabled else { return }
         guard let front = TerminalLauncher.frontApp() else { deliver(event); return }
         Task { [weak self] in
             let looking = await Task.detached {
@@ -140,7 +158,7 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
 
         let content = UNMutableNotificationContent()
         let dir = (event.cwd as NSString).lastPathComponent
-        content.title = dir.isEmpty ? "Claude finished" : "Claude finished · \(dir)"
+        content.title = dir.isEmpty ? "\(event.agent.name) finished" : "\(event.agent.name) finished · \(dir)"
         content.body = event.message.isEmpty
             ? (event.cwd as NSString).abbreviatingWithTildeInPath
             : String(event.message.prefix(140))

@@ -9,25 +9,27 @@ import { site } from "../config";
 ---
 
 <Base
-  title="cctray — every Claude Code session in your menu bar"
-  description="A tiny macOS utility for Claude Code. Usage limits, running sessions, attention chimes, and stale worktree cleanup. Free and open source."
+  title="cctray — Claude Code and Codex in your menu bar"
+  description="A tiny macOS utility for Claude Code and Codex CLI. Usage limits, running sessions, attention chimes, and stale worktree cleanup. Free and open source."
 >
   <div class="shell">
     <div class="column">
       <div class="reveal" style="--delay: 0ms"><Logo /></div>
 
-      <h1 class="sr-only">cctray — every Claude Code session in your menu bar</h1>
+      <h1 class="sr-only">cctray — Claude Code and Codex in your menu bar</h1>
 
       <div class="prose">
         <p class="lead reveal" style="--delay: 80ms">
           <Peek>cctray</Peek> is a tiny utility for{" "}
-          <Pill href="https://claude.com/claude-code"><ClaudeMark slot="icon" />Claude Code</Pill>
+          <Pill href="https://claude.com/claude-code"><ClaudeMark slot="icon" />Claude Code</Pill>{" "}
+          and <Pill href="https://openai.com/codex/">Codex</Pill>
         </p>
 
         <p class="reveal" style="--delay: 160ms">
           See your usage limits and every session you have running, including the
-          one waiting on an answer. Get a chime when Claude stops, keep your Mac
-          awake while sessions run, and delete stale git worktrees.
+          one waiting on an answer. Get a chime when an agent finishes, keep your Mac
+          awake while sessions run, and delete stale git worktrees. Switch accounts,
+          set a hotkey for each agent, and choose which agents appear in your menu.
         </p>
 
         <p class="reveal" style="--delay: 240ms">
