@@ -1,6 +1,20 @@
 import Foundation
 
 enum Shell {
+    static func start(_ path: String, _ args: [String], input: Pipe, output: Pipe) throws -> Process {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = args
+        process.standardInput = input
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        return process
+    }
+
+    static func quote(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
     static func run(_ path: String, _ args: [String]) -> (status: Int32, out: String, err: String) {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
@@ -36,7 +50,34 @@ struct ProcRow: Equatable {
     let cpu: Double
     let elapsed: TimeInterval
     let comm: String
+    var arguments = ""
     var isClaude: Bool { comm == "claude" || comm.hasSuffix("/claude") }
+    var agent: CodingAgent? {
+        if isClaude { return .claude }
+        if comm == "codex" || comm.hasSuffix("/codex") { return .codex }
+        return nil
+    }
+    var isInteractive: Bool {
+        guard agent == .codex else { return agent == .claude }
+        let rest = arguments.hasPrefix(comm) ? String(arguments.dropFirst(comm.count)) : arguments
+        var tokens = rest.split(separator: " ").map(String.init)
+        if let first = tokens.first, (first as NSString).lastPathComponent == "codex" { tokens.removeFirst() }
+        let valueOptions: Set<String> = ["-c", "--config", "--enable", "--disable", "-C", "--cd",
+            "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval",
+            "--add-dir", "--image", "-i", "--local-provider"]
+        while let first = tokens.first {
+            tokens.removeFirst()
+            if valueOptions.contains(first) {
+                if !tokens.isEmpty { tokens.removeFirst() }
+                continue
+            }
+            if first == "--version" || first == "-V" || first == "--help" || first == "-h" { return false }
+            if first.hasPrefix("-") { continue }
+            return !["app-server", "exec", "e", "review", "login", "logout", "mcp", "mcp-server",
+                     "completion", "debug", "sandbox", "apply", "cloud", "features", "help"].contains(first)
+        }
+        return true
+    }
 }
 
 enum Proc {
@@ -64,8 +105,16 @@ enum Proc {
     }
 
     static func all() -> [ProcRow] {
-        parse(psOutput: Shell.capture(
+        var rows = parse(psOutput: Shell.capture(
             "/bin/ps", ["-axo", "pid=,ppid=,tty=,%cpu=,etime=,comm="]))
+        let commands = Shell.capture("/bin/ps", ["-axo", "pid=,args="])
+        var arguments: [Int32: String] = [:]
+        for line in commands.split(separator: "\n") {
+            let parts = line.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            if parts.count == 2, let pid = Int32(parts[0]) { arguments[pid] = String(parts[1]) }
+        }
+        for index in rows.indices { rows[index].arguments = arguments[rows[index].pid] ?? "" }
+        return rows
     }
 
     static func parents(_ rows: [ProcRow]) -> [Int32: Int32] {
@@ -105,6 +154,10 @@ enum PrefKey {
     static let accountProfiles = "accounts.profiles"
     static let accountActive = "accounts.active"
     static let usageCache = "usage.cache"
+    static let usageCacheAccount = "usage.cacheAccount"
+    static let codexProfiles = "codex.profiles"
+    static let codexSelectedProfile = "codex.selectedProfile"
+    static let codexDefaultProfileDeleted = "codex.defaultProfileDeleted"
     static let staleDays = "worktrees.staleDays"
     static let autoClean = "worktrees.autoClean"
     static let didRequestPermissions = "didRequestPermissions"

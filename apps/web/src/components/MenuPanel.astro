@@ -1,29 +1,37 @@
 ---
-const gauges = [
+const claudeGauges = [
   { label: "Session", pct: 61, detail: "2h 12m" },
   { label: "Week", pct: 42, detail: "42% · 4d 6h" },
   { label: "Fable", pct: 88, detail: "88% · 4d 6h" },
 ];
 
+const codexGauges = [
+  { label: "Session", pct: 24, detail: "3h 8m" },
+  { label: "Week", pct: 35, detail: "35% · 5d 2h" },
+  { label: "Spark", pct: 12, detail: "12% · 5d 2h" },
+];
+const usage = [{ name: "Claude", gauges: claudeGauges }, { name: "Codex", gauges: codexGauges }];
+
 const rows = [
-  { name: "api-gateway", sub: "add rate limiting to the edge", state: "Working" },
-  { name: "docs-site", sub: "~/Developer/docs-site", state: "Idle" },
+  { name: "api-gateway", sub: "Claude · add rate limiting to the edge", state: "Working" },
+  { name: "docs-site", sub: "Codex · ~/Developer/docs-site", state: "Idle" },
   { name: "billing", sub: "reconcile the invoice webhook", state: "Idle" },
   { name: "mobile-app", sub: "~/Developer/mobile-app", state: "Idle" },
   { name: "data-pipeline", sub: "what are the next steps here?", state: "Idle" },
 ];
 ---
 
-<span class="panel" role="img" aria-label="The cctray menu bar panel, with usage gauges and running sessions.">
-  <span class="usage">
-    {gauges.map((g) => (
+<span class="panel" role="img" aria-label="Example cctray menu with Claude and Codex usage gauges, account switchers, and terminal sessions.">
+  {usage.map((agent) => (<span class="usage">
+    <span class="usage-title">{agent.name}</span>
+    {agent.gauges.map((g) => (
       <span class="gauge">
         <span class="glabel">{g.label}</span>
         <span class="track"><span class="fill" style={`width:${g.pct}%`} /></span>
         <span class="gdetail">{g.detail}</span>
       </span>
     ))}
-  </span>
+  </span>))}
 
   <span class="row"><span>Keep Mac Awake</span><span class="sw" /></span>
   <span class="row"><span>Pre-warm</span><span class="sw on" /></span>
@@ -31,9 +39,11 @@ const rows = [
 
   <span class="rule"></span>
 
-  <span class="row"><span>Account</span><span class="dim">you@example.com</span></span>
+  <span class="row"><span>Claude account</span><span class="dim">Personal</span></span>
 
   <span class="rule"></span>
+
+  <span class="row"><span>Codex account</span><span class="dim">Work</span></span>
 
   <span class="sessions">
     {rows.map((r) => (
@@ -85,6 +95,8 @@ const rows = [
     border: 1px solid oklch(1 0 0 / 0.06);
     background: oklch(1 0 0 / 0.035);
   }
+
+  .usage-title { grid-column: 1 / -1; font-weight: 500; color: var(--muted); }
 
   .gauge { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
   .glabel { font-size: 11px; font-weight: 500; color: var(--muted); }

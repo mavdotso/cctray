@@ -50,7 +50,7 @@ final class AccountStore: ObservableObject {
     @Published var usageByProfile: [String: String] = [:]
     @Published var unsavedLogin: String?
     private var lastProfileScan = Date.distantPast
-    weak var usageModel: UsageModel?
+    let usageModel = UsageModel()
     private let loginPoll: Duration = .seconds(2)
     private let loginTimeout: Duration = .seconds(600)
     private var addTask: Task<Void, Never>?
@@ -61,7 +61,9 @@ final class AccountStore: ObservableObject {
     }
 
     func refreshIdentity() {
-        currentEmail = ClaudeConfig.currentEmail()
+        let live = ClaudeConfig.currentEmail()
+        if live != currentEmail { usageModel.accountChanged() }
+        currentEmail = live
         mismatch = Self.mismatchWarning(active: active,
                                         expected: active.flatMap { profileEmail($0) },
                                         live: currentEmail)
@@ -137,9 +139,11 @@ final class AccountStore: ObservableObject {
     func refreshProfileUsage() async {
         guard Date().timeIntervalSince(lastProfileScan) >= 60 else { return }
         lastProfileScan = Date()
+        let scannedProfiles = profiles
+        let scannedActive = active
         var summaries: [String: String] = [:]
         /* While the live login is the wrong account, its usage is not this profile's. */
-        if mismatch == nil, let active, let usage = usageModel?.usage {
+        if mismatch == nil, let active, let usage = usageModel.usage {
             summaries[active] = Self.usageSummary(usage)
         }
         await withTaskGroup(of: (String, String).self) { group in
@@ -150,7 +154,7 @@ final class AccountStore: ObservableObject {
         }
         /* Closing the menu cancels this, which fails every request in flight.
            Those are not real failures, so drop them and let the next open retry. */
-        guard !Task.isCancelled else {
+        guard !Task.isCancelled, profiles == scannedProfiles, active == scannedActive else {
             lastProfileScan = .distantPast
             return
         }
@@ -245,11 +249,11 @@ final class AccountStore: ObservableObject {
         active = name
         refreshIdentity()
         persist()
-        usageModel?.usage = nil
-        usageModel?.isStale = false
+        usageModel.accountChanged()
         Task { [weak self] in
-            let outcome = await self?.usageModel?.refresh(force: true)
-            if self?.usageModel?.authFailed == true {
+            let outcome = await self?.usageModel.refresh(force: true)
+            guard self?.active == name else { return }
+            if self?.usageModel.authFailed == true {
                 self?.relogin(name)
             } else if outcome == .skipped {
                 self?.statusText = "Switched. Usage is rate limited; it fills in when that clears."
@@ -293,9 +297,8 @@ final class AccountStore: ObservableObject {
             return
         }
         saveCurrent(as: name)
-        ClaudeKeychain.invalidateCache()
-        usageModel?.usage = nil
-        Task { [weak self] in await self?.usageModel?.refresh(force: true) }
+        usageModel.accountChanged()
+        Task { [weak self] in await self?.usageModel.refresh(force: true) }
     }
 
     func loginToPreserve() -> String? {
@@ -354,9 +357,8 @@ final class AccountStore: ObservableObject {
         saveCurrent(as: name)
         guard profiles.contains(name) else { return }
         statusText = "Added \(email)"
-        ClaudeKeychain.invalidateCache()
-        usageModel?.usage = nil
-        Task { [weak self] in await self?.usageModel?.refresh(force: true) }
+        usageModel.accountChanged()
+        Task { [weak self] in await self?.usageModel.refresh(force: true) }
     }
 
     enum RenameOutcome: Equatable { case rename(String), reject(String), ignore }

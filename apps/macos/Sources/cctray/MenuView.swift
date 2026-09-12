@@ -2,18 +2,28 @@ import SwiftUI
 
 struct MenuView: View {
     @EnvironmentObject var state: AppState
+    @Environment(\.openSettings) private var openSettings
+    @State private var menuWindow: NSWindow?
     @AppStorage(PrefKey.showAccounts) private var showAccounts = true
+    @AppStorage(CodingAgent.claude.enabledKey) private var claudeEnabled = true
+    @AppStorage(CodingAgent.codex.enabledKey) private var codexEnabled = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            UsagePanel(model: state.usageModel)
+            if claudeEnabled {
+                UsagePanel(model: state.usageModel, title: codexEnabled ? "Claude" : nil)
+            }
+            if codexEnabled { CodexPanel(model: state.codex) }
             AwakeRow(awake: state.awake)
             PreWarmRow(preWarm: state.preWarm)
             AttentionRow(attention: state.attention)
             OrphanRow(sessions: state.sessions)
             if showAccounts {
                 GroupDivider()
-                AccountRow(accounts: state.accounts)
+                if claudeEnabled {
+                    AccountRow(accounts: state.accounts, title: codexEnabled ? "Claude account" : "Account")
+                }
+                if codexEnabled { CodexAccountRow(accounts: state.codexAccounts) }
             }
             SessionsSection(sessions: state.sessions)
             WorktreeRow(worktrees: state.worktrees)
@@ -22,6 +32,7 @@ struct MenuView: View {
         }
         .padding(10)
         .frame(width: 312)
+        .background(MenuWindowReader { menuWindow = $0 })
         .onAppear { state.menuDidOpen() }
         .onDisappear { state.menuDidClose() }
     }
@@ -36,19 +47,17 @@ struct MenuView: View {
                     .padding(.horizontal, 6)
             }
             HStack {
-                SettingsLink {
+                Button {
+                    menuWindow?.orderOut(nil)
+                    state.menuDidClose()
+                    openSettings()
+                    NSApp.activate(ignoringOtherApps: true)
+                } label: {
                     Text("Settings…")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        NSApp.activate(ignoringOtherApps: true)
-                        NSApp.windows.first { $0.title.contains("Settings") }?
-                            .makeKeyAndOrderFront(nil)
-                    }
-                })
                 Spacer()
                 Button {
                     NSApp.terminate(nil)
@@ -61,6 +70,30 @@ struct MenuView: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
+        }
+    }
+}
+
+private struct MenuWindowReader: NSViewRepresentable {
+    let onWindowChange: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> WindowView {
+        let view = WindowView()
+        view.onWindowChange = onWindowChange
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowView, context: Context) {}
+
+    final class WindowView: NSView {
+        var onWindowChange: ((NSWindow?) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                onWindowChange?(window)
+            }
         }
     }
 }
@@ -129,32 +162,71 @@ struct HoverRow<Trailing: View>: View {
     }
 }
 
-struct UsagePanel: View {
-    @ObservedObject var model: UsageModel
+struct UsageColumn {
+    let label: String
+    let pct: Double
+    let detail: String
+    var available = true
+    var help: String?
 
-    var body: some View {
-        if let u = model.usage { panel(u) }
+    static func resetText(_ date: Date?) -> String {
+        guard let date else { return "—" }
+        return UsageParser.countdown(to: date, from: Date())
     }
 
-    private func panel(_ u: Usage) -> some View {
+    static func pctDetail(_ window: UsageWindow) -> String {
+        let pct = "\(Int(window.utilization))%"
+        guard let reset = window.resetsAt else { return pct }
+        return "\(pct) · \(resetText(reset))"
+    }
+}
+
+struct UsagePanel: View {
+    @ObservedObject var model: UsageModel
+    var title: String?
+
+    var body: some View {
+        if let usage = model.usage {
+            UsageStats(title: title, columns: columns(usage), isStale: model.isStale)
+        }
+    }
+
+    private func columns(_ usage: Usage) -> [UsageColumn] {
+        var columns = [
+            UsageColumn(label: "Session", pct: usage.fiveHour.utilization,
+                        detail: UsageColumn.resetText(usage.fiveHour.resetsAt)),
+            UsageColumn(label: "Week", pct: usage.sevenDay.utilization,
+                        detail: UsageColumn.pctDetail(usage.sevenDay))
+        ]
+        if let (label, window) = usage.modelLimit {
+            columns.append(UsageColumn(label: label, pct: window.utilization,
+                                       detail: UsageColumn.pctDetail(window)))
+        }
+        return columns
+    }
+}
+
+struct UsageStats: View {
+    var title: String?
+    let columns: [UsageColumn]
+    var isStale = false
+
+    var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if let title {
+                Text(title).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            }
             HStack(alignment: .top, spacing: 10) {
-                gaugeColumn(label: "Session",
-                            pct: u.fiveHour.utilization,
-                            detail: resetText(u.fiveHour.resetsAt))
-                Divider()
-                gaugeColumn(label: "Week",
-                            pct: u.sevenDay.utilization,
-                            detail: pctDetail(u.sevenDay))
-                if let (label, window) = u.modelLimit {
-                    Divider()
-                    gaugeColumn(label: label,
-                                pct: window.utilization,
-                                detail: pctDetail(window))
+                ForEach(columns.indices, id: \.self) { index in
+                    if index > 0 { Divider() }
+                    let column = columns[index]
+                    gaugeColumn(label: column.label, pct: column.pct, detail: column.detail,
+                                available: column.available)
+                        .help(column.help ?? column.label)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
-            if model.isStale {
+            if isStale {
                 Text("May be out of date — retrying")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -173,7 +245,7 @@ struct UsagePanel: View {
         .padding(.bottom, 6)
     }
 
-    private func gaugeColumn(label: String, pct: Double, detail: String) -> some View {
+    private func gaugeColumn(label: String, pct: Double, detail: String, available: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
                 .font(.caption.weight(.medium))
@@ -181,9 +253,11 @@ struct UsagePanel: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary.opacity(0.6))
-                    Capsule()
-                        .fill(Color(nsColor: .controlAccentColor))
-                        .frame(width: max(4, geo.size.width * min(pct, 100) / 100))
+                    if available {
+                        Capsule()
+                            .fill(Color(nsColor: .controlAccentColor))
+                            .frame(width: max(4, geo.size.width * min(pct, 100) / 100))
+                    }
                 }
             }
             .frame(height: 4)
@@ -192,17 +266,6 @@ struct UsagePanel: View {
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
-    }
-
-    private func resetText(_ date: Date?) -> String {
-        guard let date else { return "—" }
-        return UsageParser.countdown(to: date, from: Date())
-    }
-
-    private func pctDetail(_ w: UsageWindow) -> String {
-        let pct = "\(Int(w.utilization))%"
-        guard let r = w.resetsAt else { return pct }
-        return "\(pct) · \(UsageParser.countdown(to: r, from: Date()))"
     }
 }
 
@@ -242,6 +305,7 @@ struct AttentionRow: View {
 
 struct AccountRow: View {
     @ObservedObject var accounts: AccountStore
+    var title = "Account"
     @State private var newName = ""
     @State private var editing: Edit?
 
@@ -249,8 +313,8 @@ struct AccountRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Row(title: "Account",
-                subtitle: accounts.statusText ?? accounts.mismatch ?? accounts.currentEmail) {
+            Row(title: title,
+                subtitle: accounts.statusText ?? accounts.mismatch) {
                 Menu(accounts.active ?? "Choose…") {
                     ForEach(accounts.profiles, id: \.self) { name in
                         Button(AccountStore.menuLabel(name, summary: accounts.usageByProfile[name])) {
@@ -345,7 +409,7 @@ struct SessionsSection: View {
 struct SessionRow: View {
     static let height: CGFloat = 34
 
-    let session: ClaudeSession
+    let session: AgentSession
     @EnvironmentObject var state: AppState
 
     var body: some View {
@@ -387,7 +451,94 @@ struct SessionRow: View {
     }
 
     private var detail: String {
-        session.title ?? (session.cwd as NSString).abbreviatingWithTildeInPath
+        session.agent.name + " · " + (session.title ?? (session.cwd as NSString).abbreviatingWithTildeInPath)
+    }
+}
+
+struct CodexPanel: View {
+    @ObservedObject var model: CodexModel
+
+    var body: some View {
+        if let limits = model.limits {
+            UsageStats(title: "Codex", columns: columns(limits), isStale: model.error != nil)
+        }
+    }
+
+    private func columns(_ limits: CodexLimits) -> [UsageColumn] {
+        var spark = column("Spark", limits.sparkWindow)
+        spark.help = limits.sparkWindows.map {
+            "\($0.label): \(Int($0.usedPercent))% · \(UsageColumn.resetText($0.reset))"
+        }.joined(separator: "\n")
+        var result: [UsageColumn] = []
+        if let session = limits.sessionWindow {
+            result.append(column("Session", session, countdownOnly: true))
+        }
+        return result + [column("Week", limits.weeklyWindow), spark]
+    }
+
+    private func column(_ label: String, _ window: CodexLimits.Window?, countdownOnly: Bool = false) -> UsageColumn {
+        guard let window else {
+            return UsageColumn(label: label, pct: 0, detail: "—", available: false,
+                               help: "Codex has not reported this limit")
+        }
+        let usage = UsageWindow(utilization: window.usedPercent, resetsAt: window.reset)
+        return UsageColumn(label: label, pct: window.usedPercent,
+                           detail: countdownOnly ? UsageColumn.resetText(window.reset) : UsageColumn.pctDetail(usage))
+    }
+}
+
+struct CodexAccountRow: View {
+    @ObservedObject var accounts: CodexAccounts
+    @ObservedObject private var model: CodexModel
+    @State private var editing = false
+    @State private var renaming = false
+    @State private var name = ""
+
+    init(accounts: CodexAccounts) {
+        self.accounts = accounts
+        self.model = accounts.model
+    }
+
+    private var profile: CodexProfile? { accounts.profiles.first { $0.id == accounts.selected } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Row(title: "Codex account", subtitle: accounts.error ?? model.error) {
+                Menu(profile?.name ?? "Choose…") {
+                    ForEach(accounts.profiles) { profile in
+                        Button(AccountStore.menuLabel(profile.name, summary: accounts.usageByProfile[profile.id])) {
+                            accounts.selected = profile.id
+                        }
+                    }
+                    Divider()
+                    Button("Add account…") { renaming = false; name = ""; editing = true }
+                    if let profile {
+                        Button("Rename \(profile.name)…") { renaming = true; name = profile.name; editing = true }
+                        Button("Delete \(profile.name)", role: .destructive) { accounts.delete(profile.id) }
+                    }
+                }
+                .controlSize(.small)
+                .fixedSize()
+            }
+            .help("Applies to new sessions. Running sessions keep the current account.")
+            if editing {
+                HStack(spacing: 6) {
+                    TextField("Account name", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .onSubmit { save() }
+                    Button(renaming ? "Rename" : "Add") { save() }.controlSize(.small)
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 4)
+            }
+        }
+    }
+
+    private func save() {
+        if renaming { accounts.rename(accounts.selected, to: name) }
+        else { accounts.add(name: name) }
+        if accounts.error == nil { editing = false }
     }
 }
 

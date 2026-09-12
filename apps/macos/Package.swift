@@ -6,6 +6,5 @@ let package = Package(
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(name: "cctray", resources: [.process("Resources")]),
-        .testTarget(name: "cctrayTests", dependencies: ["cctray"]),
     ]
 )
