@@ -4,6 +4,7 @@ import Logo from "../components/Logo.astro";
 import Pill from "../components/Pill.astro";
 import GithubMark from "../components/GithubMark.astro";
 import ClaudeMark from "../components/ClaudeMark.astro";
+import OpenAIMark from "../components/OpenAIMark.astro";
 import Peek from "../components/Peek.astro";
 import { site } from "../config";
 ---
@@ -22,7 +23,7 @@ import { site } from "../config";
         <p class="lead reveal" style="--delay: 80ms">
           <Peek>cctray</Peek> is a tiny utility for{" "}
           <Pill href="https://claude.com/claude-code"><ClaudeMark slot="icon" />Claude Code</Pill>{" "}
-          and <Pill href="https://openai.com/codex/">Codex</Pill>
+          and <Pill href="https://openai.com/codex/"><OpenAIMark slot="icon" />Codex</Pill>
         </p>
 
         <p class="reveal" style="--delay: 160ms">
