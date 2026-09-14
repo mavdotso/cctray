@@ -13,18 +13,11 @@ struct CodexLimits: Decodable {
         var reset: Date? { resetsAt.map(Date.init(timeIntervalSince1970:)) }
     }
     struct Bucket: Decodable {
-        let limitName: String?
         let primary: Window?
         let secondary: Window?
     }
     let rateLimits: Bucket?
     let rateLimitsByLimitId: [String: Bucket]?
-    var buckets: [(String, Bucket)] {
-        if let all = rateLimitsByLimitId, !all.isEmpty {
-            return all.keys.sorted().map { ($0, all[$0]!) }
-        }
-        return rateLimits.map { [("codex", $0)] } ?? []
-    }
 
     var sessionWindow: Window? {
         mainWindows.first { $0.windowDurationMins != 10080 }
@@ -34,23 +27,9 @@ struct CodexLimits: Decodable {
         mainWindows.first { $0.windowDurationMins == 10080 }
     }
 
-    private var mainWindows: [Window] {
+    var mainWindows: [Window] {
         let main = rateLimitsByLimitId?["codex"] ?? rateLimits
         return [main?.primary, main?.secondary].compactMap { $0 }
-    }
-
-    var sparkWindows: [Window] {
-        guard let bucket = buckets.first(where: {
-            ($0.1.limitName ?? $0.0).localizedCaseInsensitiveContains("spark")
-        })?.1 else { return [] }
-        return [bucket.primary, bucket.secondary].compactMap { $0 }
-    }
-
-    var sparkWindow: Window? {
-        sparkWindows.max {
-            if $0.usedPercent != $1.usedPercent { return $0.usedPercent < $1.usedPercent }
-            return ($0.resetsAt ?? .infinity) > ($1.resetsAt ?? .infinity)
-        }
     }
 }
 

@@ -55,7 +55,7 @@ final class AppState: ObservableObject {
     }
 
     func agentSettingsChanged() {
-        attention.updateAgents()
+        attention.apply()
         Task {
             await sessions.refresh()
             await usageModel.refresh(force: true)

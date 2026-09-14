@@ -6,7 +6,6 @@ enum CodingAgent: String, CaseIterable, Identifiable {
     var name: String { self == .claude ? "Claude" : "Codex" }
     var enabledKey: String { "agent.\(rawValue).enabled" }
     var hotkeyKey: String { "agent.\(rawValue).hotkey" }
-    func isEnabled(in defaults: UserDefaults) -> Bool { defaults.object(forKey: enabledKey) as? Bool ?? true }
-    var isEnabled: Bool { isEnabled(in: .standard) }
+    var isEnabled: Bool { UserDefaults.standard.object(forKey: enabledKey) as? Bool ?? true }
     static var enabled: [CodingAgent] { allCases.filter(\.isEnabled) }
 }

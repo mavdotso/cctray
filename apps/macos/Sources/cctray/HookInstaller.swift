@@ -15,17 +15,6 @@ enum HookInstaller {
     static let attentionLogPath = appSupportDir + "/attention.jsonl"
     static let claudeSettingsPath = NSHomeDirectory() + "/.claude/settings.json"
 
-    private static let supportRoot = NSHomeDirectory() + "/Library/Application Support"
-    private static let legacyQuotedHookScriptPath =
-        "\"\(supportRoot)/CCTray/attention-hook.sh\""
-
-    static func migrateLegacyDir() {
-        let fm = FileManager.default
-        guard let entries = try? fm.contentsOfDirectory(atPath: supportRoot),
-              entries.contains("CCTray"), !entries.contains("cctray") else { return }
-        try? fm.moveItem(atPath: supportRoot + "/CCTray", toPath: appSupportDir)
-    }
-
     static let hookScript = """
     #!/bin/sh
     IN=$(cat)
@@ -42,20 +31,13 @@ enum HookInstaller {
 
     private static func isOurs(_ entry: [String: Any]) -> Bool {
         guard let inner = entry["hooks"] as? [[String: Any]] else { return false }
-        return inner.contains {
-            let cmd = $0["command"] as? String
-            return cmd == quotedHookScriptPath || cmd == legacyQuotedHookScriptPath
-        }
+        return inner.contains { $0["command"] as? String == quotedHookScriptPath }
     }
 
-    private static let knownEvents = ["Stop", "Notification"]
-
     private static func stripOurs(_ hooks: inout [String: Any]) {
-        for name in knownEvents {
-            guard let entries = hooks[name] as? [[String: Any]] else { continue }
-            let kept = entries.filter { !isOurs($0) }
-            if kept.isEmpty { hooks.removeValue(forKey: name) } else { hooks[name] = kept }
-        }
+        guard let entries = hooks["Stop"] as? [[String: Any]] else { return }
+        let kept = entries.filter { !isOurs($0) }
+        if kept.isEmpty { hooks.removeValue(forKey: "Stop") } else { hooks["Stop"] = kept }
     }
 
     private static func encode(_ obj: [String: Any]) throws -> Data {
@@ -82,7 +64,6 @@ enum HookInstaller {
 
     static func setEnabled(_ enabled: Bool) throws {
         let fm = FileManager.default
-        migrateLegacyDir()
         try fm.createDirectory(atPath: appSupportDir, withIntermediateDirectories: true)
         if enabled {
             try hookScript.write(toFile: hookScriptPath, atomically: true, encoding: .utf8)

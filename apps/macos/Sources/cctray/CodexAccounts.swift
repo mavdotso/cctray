@@ -66,13 +66,11 @@ final class CodexAccounts: ObservableObject {
         }
     }
 
-    nonisolated static func usageSummary(_ limits: CodexLimits, now: Date = Date()) -> String {
-        let windows = limits.buckets.flatMap { [$0.1.primary, $0.1.secondary].compactMap { $0 } }
-        guard let top = windows.max(by: { $0.usedPercent < $1.usedPercent }) else { return "not available" }
-        let label = top.windowDurationMins == 10080 ? "week" : top.label
-        let text = "\(Int(top.usedPercent))% \(label)"
+    nonisolated static func usageSummary(_ limits: CodexLimits) -> String {
+        guard let top = limits.mainWindows.max(by: { $0.usedPercent < $1.usedPercent }) else { return "not available" }
+        let text = "\(Int(top.usedPercent))% \(top.label.lowercased())"
         guard let reset = top.reset else { return text }
-        return "\(text) · \(UsageParser.countdown(to: reset, from: now))"
+        return "\(text) · \(UsageParser.countdown(to: reset))"
     }
 
     func refreshProfileUsage() async {

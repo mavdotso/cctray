@@ -1,31 +1,14 @@
 import Foundation
-import Security
 
 enum Keychain {
     static func read(service: String) -> Data? {
         let found = Shell.run("/usr/bin/security", ["find-generic-password", "-s", service])
         guard found.status == 0 else { return nil }
-        if account(in: found.out) == nil, let data = legacyRead(service: service) {
-            _ = write(service: service, data: data)
-            return data
-        }
         let out = Shell.capture("/usr/bin/security",
                                 ["find-generic-password", "-s", service, "-w"])
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !out.isEmpty else { return nil }
         return hexDecoded(out) ?? Data(out.utf8)
-    }
-
-    private static func legacyRead(service: String) -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess else { return nil }
-        return item as? Data
     }
 
     private static func account(in attributes: String) -> String? {
@@ -133,7 +116,6 @@ enum ClaudeKeychain {
     }
 
     static func writeRaw(_ data: Data) -> Bool {
-        invalidateCache()
         let fm = FileManager.default
         guard let current = fm.contents(atPath: filePath) else {
             return Keychain.write(service: service, data: data)
@@ -145,20 +127,11 @@ enum ClaudeKeychain {
         return true
     }
 
-    private static var cachedToken: String?
-
     static func accessToken() -> String? {
-        if let cachedToken { return cachedToken }
         guard let data = readRaw(),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = obj["claudeAiOauth"] as? [String: Any],
-              let token = oauth["accessToken"] as? String
+              let oauth = obj["claudeAiOauth"] as? [String: Any]
         else { return nil }
-        cachedToken = token
-        return token
-    }
-
-    static func invalidateCache() {
-        cachedToken = nil
+        return oauth["accessToken"] as? String
     }
 }

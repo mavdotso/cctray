@@ -60,8 +60,7 @@ agents. Views are in `MenuView.swift`, `SettingsView.swift` and
   signing identities. Read them at runtime.
 - All user-facing text follows the existing tone: short, plain, no jargon.
 - Keychain access goes through `/usr/bin/security`. Direct `SecItem` calls tie
-  an item to the app's path and cause prompts after every move or rebuild; the
-  only one left reads items written by older builds once and rewrites them.
+  an item to the app's path and cause prompts after every move or rebuild.
 - Start processes through `Shell` in `Support.swift`; use `Shell.start` for
   interactive pipes, `Shell.run` for captured output and `Shell.fire` to launch.
 

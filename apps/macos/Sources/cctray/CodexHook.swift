@@ -2,29 +2,45 @@ import Foundation
 
 enum CodexHook {
     enum Failure: LocalizedError {
-        case existingNotify
+        case unreadableNotify
         var errorDescription: String? {
-            "Codex already has a notify command. Its chime was not installed."
+            "Codex has a notify command cctray cannot read. Its chime was not installed."
         }
     }
     static var home: String {
         ProcessInfo.processInfo.environment["CODEX_HOME"] ?? NSHomeDirectory() + "/.codex"
     }
     static let scriptPath = HookInstaller.appSupportDir + "/codex-attention.sh"
-    static var block: String {
-        let encoded = String(data: try! JSONSerialization.data(withJSONObject: ["/bin/sh", scriptPath],
-                                                               options: [.withoutEscapingSlashes]), encoding: .utf8)!
-        return "# cctray Codex attention\nnotify = \(encoded)\n# end cctray Codex attention\n"
-    }
+    static let head = "# cctray Codex attention\n"
+    static let tail = "# end cctray Codex attention\n"
+    static let kept = "# kept: "
 
+    /* Codex allows one notify command: chain the existing one and keep it for removal. */
     static func configure(_ text: String, enabled: Bool) throws -> String {
-        let stripped = text.replacingOccurrences(of: block, with: "")
-        guard enabled else { return stripped }
-        let pattern = #"(?m)^\s*["']?notify["']?\s*="#
-        guard stripped.range(of: pattern, options: .regularExpression) == nil else {
-            throw Failure.existingNotify
+        var text = text
+        let blockPattern = "(?s)" + NSRegularExpression.escapedPattern(for: head) + ".*?"
+            + NSRegularExpression.escapedPattern(for: tail)
+        if let block = text.range(of: blockPattern, options: .regularExpression) {
+            let restored = text[block].split(separator: "\n")
+                .first { $0.hasPrefix(kept) }
+                .map { $0.dropFirst(kept.count) + "\n" } ?? ""
+            text.replaceSubrange(block, with: restored)
         }
-        return block + stripped
+        guard enabled else { return text }
+        var command = ["/bin/sh", scriptPath]
+        var keptLine = ""
+        if let existing = text.range(of: #"(?m)^\s*["']?notify["']?\s*=.*\n?"#, options: .regularExpression) {
+            let line = text[existing].trimmingCharacters(in: .newlines)
+            let value = line.drop { $0 != "=" }.dropFirst()
+            guard let args = try? JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String]
+            else { throw Failure.unreadableNotify }
+            command += args
+            keptLine = kept + line + "\n"
+            text.removeSubrange(existing)
+        }
+        let encoded = String(data: try! JSONSerialization.data(withJSONObject: command,
+                                                               options: [.withoutEscapingSlashes]), encoding: .utf8)!
+        return head + keptLine + "notify = \(encoded)\n" + tail + text
     }
 
     static func setEnabled(_ enabled: Bool, home: String = home) throws {
@@ -40,9 +56,13 @@ enum CodexHook {
             }
             let script = """
             #!/bin/sh
+            [ "$#" -gt 0 ] || exit 0
             TTY=$(/bin/ps -o tty= -p "$PPID" | /usr/bin/tr -d ' ')
-            [ -n "$1" ] || exit 0
-            printf '{"provider":"codex","tty":"%s","raw":%s}\\n' "$TTY" "$1" >> \(Shell.quote(HookInstaller.attentionLogPath))
+            eval "PAYLOAD=\\${$#}"
+            [ -n "$PAYLOAD" ] || exit 0
+            printf '{"provider":"codex","tty":"%s","raw":%s}\\n' "$TTY" "$PAYLOAD" >> \(Shell.quote(HookInstaller.attentionLogPath))
+            [ "$#" -gt 1 ] || exit 0
+            exec "$@"
             """
             try script.write(toFile: scriptPath, atomically: true, encoding: .utf8)
             try fm.createDirectory(atPath: home, withIntermediateDirectories: true)

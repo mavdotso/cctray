@@ -7,8 +7,8 @@ struct AgentHotkey: Codable, Equatable {
     let key: String
 
     static let none = AgentHotkey(keyCode: nil, modifiers: 0, key: "")
-    static func read(for agent: CodingAgent, defaults: UserDefaults = .standard) -> AgentHotkey {
-        if let data = defaults.data(forKey: agent.hotkeyKey),
+    static func read(for agent: CodingAgent) -> AgentHotkey {
+        if let data = UserDefaults.standard.data(forKey: agent.hotkeyKey),
            let shortcut = try? JSONDecoder().decode(Self.self, from: data) { return shortcut }
         return AgentHotkey(keyCode: agent == .claude ? 8 : 31,
                            modifiers: NSEvent.ModifierFlags([.command, .option]).rawValue,
@@ -28,9 +28,9 @@ struct AgentHotkey: Codable, Equatable {
 
     static let relevantFlags: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
 
-    static func agent(keyCode: UInt16, modifiers: UInt, defaults: UserDefaults = .standard) -> CodingAgent? {
+    static func agent(keyCode: UInt16, modifiers: UInt) -> CodingAgent? {
         CodingAgent.allCases.first {
-            $0.isEnabled(in: defaults) && read(for: $0, defaults: defaults).matches(keyCode: keyCode, modifiers: modifiers)
+            $0.isEnabled && read(for: $0).matches(keyCode: keyCode, modifiers: modifiers)
         }
     }
 }

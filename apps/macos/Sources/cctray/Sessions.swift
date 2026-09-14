@@ -25,21 +25,22 @@ enum Sessions {
         rows.filter { $0.isClaude && $0.ppid == 1 }.map(\.pid)
     }
 
-    static func parseCwds(lsofOutput: String) -> [Int32: String] {
-        var result: [Int32: String] = [:]
-        var pid: Int32 = 0
-        for line in lsofOutput.split(separator: "\n") {
-            if line.hasPrefix("p") { pid = Int32(line.dropFirst()) ?? 0 }
-            if line.hasPrefix("n") { result[pid] = String(line.dropFirst()) }
+    static func openFiles(pids: [Int32]) -> (cwds: [Int32: String], transcripts: [Int32: [String]]) {
+        guard !pids.isEmpty else { return ([:], [:]) }
+        let output = Shell.capture("/usr/sbin/lsof", ["-p", pids.map(String.init).joined(separator: ","), "-Ffn"])
+        var cwds: [Int32: String] = [:], transcripts: [Int32: [String]] = [:]
+        var pid: Int32 = 0, fd = Substring("")
+        for line in output.split(separator: "\n") {
+            switch line.first {
+            case "p": pid = Int32(line.dropFirst()) ?? 0
+            case "f": fd = line.dropFirst()
+            case "n" where fd == "cwd": cwds[pid] = String(line.dropFirst())
+            case "n" where line.contains("/sessions/") && line.hasSuffix(".jsonl"):
+                transcripts[pid, default: []].append(String(line.dropFirst()))
+            default: break
+            }
         }
-        return result
-    }
-
-    static func cwds(for sessions: [AgentSession]) -> [Int32: String] {
-        guard !sessions.isEmpty else { return [:] }
-        let pids = sessions.map { String($0.pid) }.joined(separator: ",")
-        return parseCwds(lsofOutput: Shell.capture("/usr/sbin/lsof",
-                                                   ["-a", "-p", pids, "-d", "cwd", "-Fn"]))
+        return (cwds, transcripts)
     }
 }
 

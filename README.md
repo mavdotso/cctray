@@ -13,7 +13,8 @@ Requires macOS 14 or later.
 - **Sessions** — running `claude` and `codex` terminal processes, their project and conversation
   title, and whether it is working or idle. Click one to focus its tab.
 - **Attention chime** — a sound and a notification when a session finishes,
-  suppressed when you are already looking at that tab.
+  suppressed when you are already looking at that tab. **Silent alerts** in
+  Settings keeps the notification and drops the sound.
 - **New Session** — configurable hotkeys start each enabled agent in your chosen
   folder. Defaults: ⌘⌥C for Claude and ⌘⌥O for Codex.
 - **Keep Mac Awake** — blocks idle and lid-close sleep while sessions run.
@@ -29,10 +30,9 @@ Install Codex CLI and run `codex login` with your ChatGPT account. cctray reads
 the current account's usage through the installed CLI's
 [app-server API](https://developers.openai.com/codex/app-server). API-key logins
 do not expose ChatGPT subscription limits. Usage windows and additional limits
-use the durations and names returned by Codex. The usage card shows Session,
-Week, and Spark side by side. Spark shows its most-used quota window; hover for
-both windows. The Session column is hidden when Codex does not report a session
-limit. Other missing limits display “—”.
+use the durations and names returned by Codex. The usage card shows Session and
+Week side by side. When Codex reports only a weekly limit, the card shows that
+one line.
 
 Use **Settings → Agents** to enable or disable Claude and Codex independently,
 and record a hotkey for each. Click a shortcut and press a letter or number with
@@ -61,7 +61,8 @@ New profile homes live under `~/Library/Application Support/cctray/codex-account
 The attention toggle installs a
 [Codex notification command](https://developers.openai.com/codex/config-advanced#notifications)
 in each home's `config.toml`. Restart existing Codex sessions to pick it up.
-An existing custom `notify` command is preserved and reported as a setup conflict.
+An existing `notify` command keeps running: cctray calls it after logging the
+turn, and restores it when you turn the chime off.
 The completion chime, notification click, terminal focus, and keep-awake work
 the same way as for Claude terminal sessions. Desktop app sessions are excluded.
 
