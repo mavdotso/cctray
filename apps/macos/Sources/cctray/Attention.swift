@@ -89,7 +89,7 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
     private var fd: Int32 = -1
     private var tail = LogTail()
 
-    private func apply() {
+    func apply() {
         do {
             try HookInstaller.setEnabled(isOn && CodingAgent.claude.isEnabled)
             lastError = nil
@@ -114,8 +114,6 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
             .requestAuthorization(options: [.alert, .sound]) { _, _ in }
         if isOn { apply() }
     }
-
-    func updateAgents() { apply() }
 
     private func startWatching() {
         stopWatching()
@@ -154,7 +152,9 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
     }
 
     private func deliver(_ event: AttentionEvent) {
-        CueSynth.play(UserDefaults.standard.string(forKey: PrefKey.chimeSound))
+        if !UserDefaults.standard.bool(forKey: PrefKey.chimeSilent) {
+            CueSynth.play(UserDefaults.standard.string(forKey: PrefKey.chimeSound))
+        }
 
         let content = UNMutableNotificationContent()
         let dir = (event.cwd as NSString).lastPathComponent

@@ -3,7 +3,6 @@ import SwiftUI
 struct MenuView: View {
     @EnvironmentObject var state: AppState
     @Environment(\.openSettings) private var openSettings
-    @State private var menuWindow: NSWindow?
     @AppStorage(PrefKey.showAccounts) private var showAccounts = true
     @AppStorage(CodingAgent.claude.enabledKey) private var claudeEnabled = true
     @AppStorage(CodingAgent.codex.enabledKey) private var codexEnabled = true
@@ -32,7 +31,6 @@ struct MenuView: View {
         }
         .padding(10)
         .frame(width: 312)
-        .background(MenuWindowReader { menuWindow = $0 })
         .onAppear { state.menuDidOpen() }
         .onDisappear { state.menuDidClose() }
     }
@@ -48,7 +46,7 @@ struct MenuView: View {
             }
             HStack {
                 Button {
-                    menuWindow?.orderOut(nil)
+                    NSApp.keyWindow?.orderOut(nil)
                     state.menuDidClose()
                     openSettings()
                     NSApp.activate(ignoringOtherApps: true)
@@ -70,30 +68,6 @@ struct MenuView: View {
             }
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-        }
-    }
-}
-
-private struct MenuWindowReader: NSViewRepresentable {
-    let onWindowChange: (NSWindow?) -> Void
-
-    func makeNSView(context: Context) -> WindowView {
-        let view = WindowView()
-        view.onWindowChange = onWindowChange
-        return view
-    }
-
-    func updateNSView(_ nsView: WindowView, context: Context) {}
-
-    final class WindowView: NSView {
-        var onWindowChange: ((NSWindow?) -> Void)?
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                onWindowChange?(window)
-            }
         }
     }
 }
@@ -166,12 +140,10 @@ struct UsageColumn {
     let label: String
     let pct: Double
     let detail: String
-    var available = true
-    var help: String?
 
     static func resetText(_ date: Date?) -> String {
         guard let date else { return "—" }
-        return UsageParser.countdown(to: date, from: Date())
+        return UsageParser.countdown(to: date)
     }
 
     static func pctDetail(_ window: UsageWindow) -> String {
@@ -220,9 +192,7 @@ struct UsageStats: View {
                 ForEach(columns.indices, id: \.self) { index in
                     if index > 0 { Divider() }
                     let column = columns[index]
-                    gaugeColumn(label: column.label, pct: column.pct, detail: column.detail,
-                                available: column.available)
-                        .help(column.help ?? column.label)
+                    gaugeColumn(label: column.label, pct: column.pct, detail: column.detail)
                 }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -245,7 +215,7 @@ struct UsageStats: View {
         .padding(.bottom, 6)
     }
 
-    private func gaugeColumn(label: String, pct: Double, detail: String, available: Bool) -> some View {
+    private func gaugeColumn(label: String, pct: Double, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)
                 .font(.caption.weight(.medium))
@@ -253,11 +223,9 @@ struct UsageStats: View {
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(.quaternary.opacity(0.6))
-                    if available {
-                        Capsule()
-                            .fill(Color(nsColor: .controlAccentColor))
-                            .frame(width: max(4, geo.size.width * min(pct, 100) / 100))
-                    }
+                    Capsule()
+                        .fill(Color(nsColor: .controlAccentColor))
+                        .frame(width: max(4, geo.size.width * min(pct, 100) / 100))
                 }
             }
             .frame(height: 4)
@@ -299,7 +267,7 @@ struct PreWarmRow: View {
 struct AttentionRow: View {
     @ObservedObject var attention: AttentionCenter
     var body: some View {
-        ToggleRow(title: "Attention chime", subtitle: attention.lastError, isOn: $attention.isOn)
+        ToggleRow(title: "Attention chime", isOn: $attention.isOn)
     }
 }
 
@@ -459,31 +427,21 @@ struct CodexPanel: View {
     @ObservedObject var model: CodexModel
 
     var body: some View {
-        if let limits = model.limits {
-            UsageStats(title: "Codex", columns: columns(limits), isStale: model.error != nil)
+        if let limits = model.limits, case let columns = columns(limits), !columns.isEmpty {
+            UsageStats(title: limits.sessionWindow == nil ? nil : "Codex",
+                       columns: columns, isStale: model.error != nil)
         }
     }
 
     private func columns(_ limits: CodexLimits) -> [UsageColumn] {
-        var spark = column("Spark", limits.sparkWindow)
-        spark.help = limits.sparkWindows.map {
-            "\($0.label): \(Int($0.usedPercent))% · \(UsageColumn.resetText($0.reset))"
-        }.joined(separator: "\n")
-        var result: [UsageColumn] = []
-        if let session = limits.sessionWindow {
-            result.append(column("Session", session, countdownOnly: true))
+        let session = limits.sessionWindow.map {
+            UsageColumn(label: "Session", pct: $0.usedPercent, detail: UsageColumn.resetText($0.reset))
         }
-        return result + [column("Week", limits.weeklyWindow), spark]
-    }
-
-    private func column(_ label: String, _ window: CodexLimits.Window?, countdownOnly: Bool = false) -> UsageColumn {
-        guard let window else {
-            return UsageColumn(label: label, pct: 0, detail: "—", available: false,
-                               help: "Codex has not reported this limit")
+        let week = limits.weeklyWindow.map {
+            UsageColumn(label: session == nil ? "Codex · Week" : "Week", pct: $0.usedPercent,
+                        detail: UsageColumn.pctDetail(UsageWindow(utilization: $0.usedPercent, resetsAt: $0.reset)))
         }
-        let usage = UsageWindow(utilization: window.usedPercent, resetsAt: window.reset)
-        return UsageColumn(label: label, pct: window.usedPercent,
-                           detail: countdownOnly ? UsageColumn.resetText(window.reset) : UsageColumn.pctDetail(usage))
+        return [session, week].compactMap { $0 }
     }
 }
 

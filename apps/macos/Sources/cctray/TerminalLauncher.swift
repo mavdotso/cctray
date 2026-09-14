@@ -72,9 +72,7 @@ enum TerminalLauncher {
     static let loginCommand = "claude auth login"
 
     @discardableResult
-    static func newLogin(in app: TerminalApp = .selected) -> String? {
-        open(loginCommand, in: app)
-    }
+    static func newLogin() -> String? { open(loginCommand, in: .selected) }
 
     private static func open(_ command: String, in app: TerminalApp) -> String? {
         let scripted = appleScriptLiteral(command)
@@ -234,12 +232,11 @@ enum TerminalLauncher {
             owned.map { ($0, ptyAtime($0)) }))
     }
 
-    static func mostRecentlyUsed(_ tty: String, atimes: [String: TimeInterval],
-                                 grace: TimeInterval = 2) -> Bool {
+    static func mostRecentlyUsed(_ tty: String, atimes: [String: TimeInterval]) -> Bool {
         guard let mine = atimes[tty] else { return false }
         guard atimes.count > 1 else { return true }
         let others = atimes.filter { $0.key != tty }.values.max() ?? 0
-        return mine + grace >= others
+        return mine + 2 >= others
     }
 
     private static func ptyAtime(_ tty: String) -> TimeInterval {

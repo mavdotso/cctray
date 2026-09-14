@@ -148,6 +148,7 @@ enum PrefKey {
     static let prewarmEndMin = "prewarm.endMin"
     static let chimeOn = "chime.on"
     static let chimeSound = "chime.sound"
+    static let chimeSilent = "chime.silent"
     static let showSessions = "sessions.show"
     static let showAccounts = "accounts.show"
     static let autoAwake = "sessions.autoAwake"

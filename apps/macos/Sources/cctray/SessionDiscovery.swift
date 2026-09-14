@@ -8,20 +8,9 @@ final class SessionDiscovery {
 
         static func capture() -> Snapshot {
             let rows = Proc.all()
-            let cwds = Sessions.cwds(for: Sessions.active(rows))
-            let pids = rows.filter { $0.agent == .codex }.map { String($0.pid) }.joined(separator: ",")
-            var files: [Int32: [String]] = [:]
-            if !pids.isEmpty {
-                let output = Shell.capture("/usr/sbin/lsof", ["-p", pids, "-Fn"])
-                var pid: Int32 = 0
-                for line in output.split(separator: "\n") {
-                    if line.hasPrefix("p") { pid = Int32(line.dropFirst()) ?? 0 }
-                    if line.hasPrefix("n"), line.contains("/sessions/"), line.hasSuffix(".jsonl") {
-                        files[pid, default: []].append(String(line.dropFirst()))
-                    }
-                }
-            }
-            return Snapshot(rows: rows, cwds: cwds, openFiles: files)
+            let pids = Set(rows.filter { $0.agent == .codex }.map(\.pid) + Sessions.active(rows).map(\.pid))
+            let open = Sessions.openFiles(pids: pids.sorted())
+            return Snapshot(rows: rows, cwds: open.cwds, openFiles: open.transcripts)
         }
     }
 

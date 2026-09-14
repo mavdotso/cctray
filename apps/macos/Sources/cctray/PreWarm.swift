@@ -96,7 +96,7 @@ final class PreWarmController: ObservableObject {
 
     private func evaluate(_ targets: [Target]) async {
         for target in targets {
-            guard isOn, target.agent.isEnabled(in: defaults),
+            guard isOn, target.agent.isEnabled,
                   !running.contains(target.agent),
                   PreWarmRule.shouldFire(now: Date(), resetsAt: target.reset, hours: hours,
                                          firedFor: fired[target.key]) else { continue }

@@ -48,11 +48,7 @@ enum Worktrees {
         UserDefaults.standard.object(forKey: PrefKey.staleDays) as? Int ?? defaultStaleDays
     }
 
-    static func isStale(epoch: TimeInterval, now: Date, days: Int) -> Bool {
-        now.timeIntervalSince1970 - epoch > TimeInterval(days) * 86400
-    }
-
-    static func scan(root: String, now: Date = Date(), days: Int = defaultStaleDays) -> [Worktree] {
+    static func scan(root: String, days: Int) -> [Worktree] {
         let fm = FileManager.default
         guard let subdirs = try? fm.contentsOfDirectory(atPath: root) else { return [] }
         var result: [Worktree] = []
@@ -64,7 +60,7 @@ enum Worktrees {
             for entry in linkedEntries(porcelain: porcelain) where fm.fileExists(atPath: entry.path) {
                 let head = git(["-C", entry.path, "log", "-1", "--format=%ct"])
                 guard let epoch = TimeInterval(head.trimmingCharacters(in: .whitespacesAndNewlines)),
-                      isStale(epoch: epoch, now: now, days: days) else { continue }
+                      Date().timeIntervalSince1970 - epoch > TimeInterval(days) * 86400 else { continue }
                 let status = git(["-C", entry.path, "status", "--porcelain"])
                 let du = Shell.capture("/usr/bin/du", ["-sk", entry.path])
                     .split(separator: "\t").first.flatMap { Int($0) } ?? 0

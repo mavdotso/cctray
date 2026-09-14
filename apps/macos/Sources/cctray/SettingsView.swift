@@ -12,6 +12,7 @@ struct SettingsView: View {
     @AppStorage(PrefKey.prewarmStartMin) private var startMin = ActiveHours.default.startMin
     @AppStorage(PrefKey.prewarmEndMin) private var endMin = ActiveHours.default.endMin
     @AppStorage(PrefKey.chimeSound) private var chime = CueSynth.defaultName
+    @AppStorage(PrefKey.chimeSilent) private var silent = false
     @AppStorage(PrefKey.sessionDir) private var sessionDir = ""
     @AppStorage(PrefKey.showSessions) private var showSessions = true
     @AppStorage(PrefKey.showAccounts) private var showAccounts = true
@@ -29,7 +30,7 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .scrollDisabled(true)
         .scrollIndicators(.hidden)
-        .frame(width: 800, height: 560)
+        .frame(width: 800, height: 620)
         .modifier(SettingsWindowBackground())
         .toolbarBackground(.hidden, for: .windowToolbar)
         .onChange(of: claudeEnabled) { _, _ in recordingAgent = nil; state.agentSettingsChanged() }
@@ -124,6 +125,11 @@ struct SettingsView: View {
                     ForEach(CueSynth.names, id: \.self) { Text($0.capitalized) }
                 }
                 .onChange(of: chime) { _, s in CueSynth.play(s) }
+                .disabled(silent)
+                Toggle("Silent alerts", isOn: $silent)
+                if let error = state.attention.lastError {
+                    Text(error).font(.caption).foregroundStyle(.secondary)
+                }
 
                 LabeledContent("Notifications") {
                     switch notifStatus {

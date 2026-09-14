@@ -90,8 +90,8 @@ enum UsageParser {
         return try dec.decode(Usage.self, from: data)
     }
 
-    static func countdown(to date: Date, from now: Date) -> String {
-        let s = max(0, Int(date.timeIntervalSince(now)))
+    static func countdown(to date: Date) -> String {
+        let s = max(0, Int(date.timeIntervalSinceNow))
         let d = s / 86400
         let h = (s % 86400) / 3600
         let m = (s % 3600) / 60
@@ -129,7 +129,6 @@ final class UsageModel: ObservableObject {
     func accountChanged() {
         generation += 1
         observedAccount = ClaudeConfig.currentEmail()
-        ClaudeKeychain.invalidateCache()
         usage = nil
         loadedAccount = nil
         authFailed = false
@@ -159,7 +158,7 @@ final class UsageModel: ObservableObject {
 
     @discardableResult
     func refresh(force: Bool = false, retrying: Bool = false) async -> Outcome {
-        guard CodingAgent.claude.isEnabled(in: defaults) else { return .skipped }
+        guard CodingAgent.claude.isEnabled else { return .skipped }
         let account = ClaudeConfig.currentEmail()
         if observedAccount != account { accountChanged() }
         let requestGeneration = generation
@@ -185,7 +184,6 @@ final class UsageModel: ObservableObject {
         } catch UsageFetchError.http(401) {
             guard !Task.isCancelled, requestGeneration == generation,
                   account == ClaudeConfig.currentEmail() else { return .skipped }
-            ClaudeKeychain.invalidateCache()
             if !retrying { return await refresh(force: true, retrying: true) }
             usage = nil
             authFailed = true

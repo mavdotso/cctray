@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 enum ClaudeConfig {
     static let path = NSHomeDirectory() + "/.claude.json"
@@ -75,9 +74,7 @@ final class AccountStore: ObservableObject {
         UserDefaults.standard.set(active, forKey: PrefKey.accountActive)
     }
 
-    nonisolated func profileServices(_ name: String) -> [String] {
-        ["cctray-profile-\(name)", "CCTray-profile-\(name)"]
-    }
+    nonisolated func profileService(_ name: String) -> String { "cctray-profile-\(name)" }
 
     /* Every failure string here is shown to the user as the profile's menu label. */
     enum ProfileToken { case usable(String), failed(String) }
@@ -109,11 +106,11 @@ final class AccountStore: ObservableObject {
         return .usable(token)
     }
 
-    nonisolated static func usageSummary(_ usage: Usage, now: Date = Date()) -> String {
+    nonisolated static func usageSummary(_ usage: Usage) -> String {
         let top = usage.topLimit
         let pct = "\(Int(top.percent))% \(top.label)"
         guard let reset = top.resetsAt else { return pct }
-        return "\(pct) · \(UsageParser.countdown(to: reset, from: now))"
+        return "\(pct) · \(UsageParser.countdown(to: reset))"
     }
 
     /* macOS truncates a long menu item in the middle, which eats into the number.
@@ -162,8 +159,7 @@ final class AccountStore: ObservableObject {
     }
 
     nonisolated func readProfile(_ name: String) -> [String: Any]? {
-        guard let data = profileServices(name).lazy
-            .compactMap({ Keychain.read(service: $0) }).first else { return nil }
+        guard let data = Keychain.read(service: profileService(name)) else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
@@ -173,7 +169,7 @@ final class AccountStore: ObservableObject {
 
     private nonisolated func writeProfile(_ name: String, payload: [String: Any]) -> Bool {
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return false }
-        return Keychain.write(service: profileServices(name)[0], data: data)
+        return Keychain.write(service: profileService(name), data: data)
     }
 
     func saveCurrent(as name: String) {
@@ -271,6 +267,7 @@ final class AccountStore: ObservableObject {
         }
         let expected = profileEmail(name)
         let before = ClaudeConfig.currentEmail()
+        let credentials = ClaudeKeychain.readRaw()
         if let error = TerminalLauncher.newLogin() {
             statusText = error
             return
@@ -278,7 +275,7 @@ final class AccountStore: ObservableObject {
         isAddingAccount = true
         statusText = "\(name) needs a login — log in as \(expected ?? name)."
         addTask = Task { [weak self] in
-            guard let result = await self?.waitForLogin(after: before) else { return }
+            guard let result = await self?.waitForLogin(after: before, credentials: credentials) else { return }
             self?.finishRelogin(name, expected: expected, result: result)
         }
     }
@@ -333,13 +330,14 @@ final class AccountStore: ObservableObject {
 
     enum LoginWait: Equatable { case found(String), timedOut, cancelled }
 
-    func waitForLogin(after before: String?) async -> LoginWait {
+    /* A relogin to the same email only changes the credentials. */
+    func waitForLogin(after before: String?, credentials: Data? = nil) async -> LoginWait {
         var waited = Duration.zero
         while waited < loginTimeout {
             try? await Task.sleep(for: loginPoll)
             if Task.isCancelled { return .cancelled }
-            let now = await Task.detached { ClaudeConfig.currentEmail() }.value
-            if let now, now != before { return .found(now) }
+            let (now, creds) = await Task.detached { (ClaudeConfig.currentEmail(), ClaudeKeychain.readRaw()) }.value
+            if let now, now != before || (credentials != nil && creds != credentials) { return .found(now) }
             waited += loginPoll
         }
         return .timedOut
@@ -387,7 +385,7 @@ final class AccountStore: ObservableObject {
             statusText = "Rename failed: keychain write error"
             return
         }
-        for service in profileServices(old) { Keychain.delete(service: service) }
+        Keychain.delete(service: profileService(old))
         profiles[index] = clean
         if active == old { active = clean }
         usageByProfile[clean] = usageByProfile.removeValue(forKey: old)
@@ -397,7 +395,7 @@ final class AccountStore: ObservableObject {
     }
 
     func delete(_ name: String) {
-        for service in profileServices(name) { Keychain.delete(service: service) }
+        Keychain.delete(service: profileService(name))
         profiles.removeAll { $0 == name }
         usageByProfile[name] = nil
         if active == name { active = nil }
