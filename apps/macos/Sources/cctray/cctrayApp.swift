@@ -93,7 +93,6 @@ struct cctrayApp: App {
         Window("Clean Worktrees", id: "cleanWorktrees") {
             CleanWorktreesView(worktrees: state.worktrees)
         }
-        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 

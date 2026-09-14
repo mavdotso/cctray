@@ -157,7 +157,7 @@ struct SettingsView: View {
     }
 }
 
-private struct SettingsWindowBackground: ViewModifier {
+struct SettingsWindowBackground: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if #available(macOS 26.0, *) {
