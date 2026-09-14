@@ -15,42 +15,36 @@ struct CleanWorktreesView: View {
                 pickerView
             }
         }
-        .frame(width: 360)
-        .background(.regularMaterial, ignoresSafeAreaEdges: .all)
+        .frame(width: 420)
+        .modifier(SettingsWindowBackground())
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .onAppear { selected = Set(worktrees.stale.filter(\.isRemovable).map(\.id)) }
     }
 
     private var pickerView: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Clean Worktrees")
-                    .font(.headline)
-                Text("No commits for \(Worktrees.staleDays)+ days. Session data goes too.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 6)
-            .padding(.top, 4)
-            .padding(.bottom, 8)
-
-            if worktrees.stale.isEmpty {
-                Text("Nothing stale to clean.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-            } else {
-                ScrollView {
-                    VStack(spacing: 1) {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    if worktrees.stale.isEmpty {
+                        Text("Nothing stale to clean.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                    } else {
                         ForEach(worktrees.stale) { wt in
                             row(wt)
                         }
                     }
+                } header: {
+                    Text("Stale worktrees")
+                } footer: {
+                    Text("No commits for \(Worktrees.staleDays)+ days. Session data goes too.")
                 }
-                .frame(height: min(CGFloat(worktrees.stale.count) * 40 + 8, 320))
             }
-
-            GroupDivider()
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .scrollDisabled(worktrees.stale.count <= 6)
+            .frame(height: min(CGFloat(max(worktrees.stale.count, 1)) * 44 + 96, 400))
+            .disabled(working)
 
             HStack {
                 Text(footerText)
@@ -58,23 +52,32 @@ struct CleanWorktreesView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }
-                    .controlSize(.small)
                     .keyboardShortcut(.cancelAction)
-                Button("Remove") { run() }
-                    .controlSize(.small)
-                    .buttonStyle(.borderedProminent)
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(selected.isEmpty || working)
+                    .disabled(working)
+                Button {
+                    run()
+                } label: {
+                    if working {
+                        ProgressView().controlSize(.small).frame(width: 52)
+                    } else {
+                        Text("Remove").frame(width: 52)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(selected.isEmpty || working)
             }
-            .padding(.horizontal, 6)
-            .padding(.bottom, 2)
+            .padding(.horizontal, 20)
+            .padding(.top, 6)
+            .padding(.bottom, 16)
         }
-        .padding(10)
     }
 
     private func row(_ wt: Worktree) -> some View {
-        SelectRow(isOn: selected.contains(wt.id),
-                  action: { toggle(wt.id) }) {
+        Toggle(isOn: Binding(
+            get: { selected.contains(wt.id) },
+            set: { if $0 { selected.insert(wt.id) } else { selected.remove(wt.id) } }
+        )) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(wt.name)
                     .lineLimit(1)
@@ -94,12 +97,9 @@ struct CleanWorktreesView: View {
         return parts.joined(separator: " · ")
     }
 
-    private func toggle(_ id: String) {
-        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
-    }
-
     private var footerText: String {
-        Worktrees.footerText(for: worktrees.stale.filter { selected.contains($0.id) })
+        if working { return "Removing \(selected.count)…" }
+        return Worktrees.footerText(for: worktrees.stale.filter { selected.contains($0.id) })
     }
 
     private func run() {
@@ -126,34 +126,10 @@ struct CleanWorktreesView: View {
                     .foregroundStyle(.orange)
             }
             Button("Done") { dismiss() }
-                .controlSize(.small)
                 .keyboardShortcut(.defaultAction)
                 .padding(.top, 8)
         }
         .frame(maxWidth: .infinity)
         .padding(24)
-    }
-}
-
-private struct SelectRow<Content: View>: View {
-    let isOn: Bool
-    let action: () -> Void
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                content()
-                Spacer(minLength: 8)
-                Image(systemName: isOn ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isOn ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary))
-            }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .hoverHighlight()
     }
 }
