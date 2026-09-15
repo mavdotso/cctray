@@ -18,22 +18,32 @@ enum CodexHook {
     /* Codex allows one notify command: chain the existing one and keep it for removal. */
     static func configure(_ text: String, enabled: Bool) throws -> String {
         var text = text
+        let notifyPattern = #"(?m)^\s*["']?notify["']?\s*=.*\n?"#
         let blockPattern = "(?s)" + NSRegularExpression.escapedPattern(for: head) + ".*?"
             + NSRegularExpression.escapedPattern(for: tail)
         if let block = text.range(of: blockPattern, options: .regularExpression) {
             let restored = text[block].split(separator: "\n")
                 .first { $0.hasPrefix(kept) }
                 .map { $0.dropFirst(kept.count) + "\n" } ?? ""
-            text.replaceSubrange(block, with: restored)
+            var withoutBlock = text
+            withoutBlock.removeSubrange(block)
+            if withoutBlock.range(of: notifyPattern, options: .regularExpression) != nil {
+                text = withoutBlock
+            } else {
+                text.replaceSubrange(block, with: restored)
+            }
         }
         guard enabled else { return text }
         var command = ["/bin/sh", scriptPath]
         var keptLine = ""
-        if let existing = text.range(of: #"(?m)^\s*["']?notify["']?\s*=.*\n?"#, options: .regularExpression) {
+        if let existing = text.range(of: notifyPattern, options: .regularExpression) {
             let line = text[existing].trimmingCharacters(in: .newlines)
             let value = line.drop { $0 != "=" }.dropFirst()
             guard let args = try? JSONSerialization.jsonObject(with: Data(value.utf8)) as? [String]
             else { throw Failure.unreadableNotify }
+            if args.contains(where: {
+                $0.replacingOccurrences(of: #"\/"#, with: "/").contains(scriptPath)
+            }) { return text }
             command += args
             keptLine = kept + line + "\n"
             text.removeSubrange(existing)

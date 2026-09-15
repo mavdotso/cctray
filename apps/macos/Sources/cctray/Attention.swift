@@ -17,7 +17,8 @@ enum AttentionParser {
               raw["notification_type"] as? String != "idle_prompt"
         else { return nil }
         if obj["provider"] as? String == "codex" {
-            guard raw["type"] as? String == "agent-turn-complete" else { return nil }
+            guard raw["type"] as? String == "agent-turn-complete",
+                  !isCodexTitleGeneration(raw) else { return nil }
             return AttentionEvent(tty: obj["tty"] as? String ?? "",
                                   cwd: raw["cwd"] as? String ?? "",
                                   message: raw["last-assistant-message"] as? String ?? "",
@@ -27,6 +28,17 @@ enum AttentionParser {
                               cwd: projectRoot(cwd: raw["cwd"] as? String ?? "",
                                                transcriptPath: raw["transcript_path"] as? String ?? ""),
                               message: raw["last_assistant_message"] as? String ?? "")
+    }
+
+    private static func isCodexTitleGeneration(_ raw: [String: Any]) -> Bool {
+        guard let inputs = raw["input-messages"] as? [String],
+              inputs.count == 1,
+              inputs[0].hasPrefix("Generate a concise, single-line task title"),
+              let message = raw["last-assistant-message"] as? String,
+              let data = message.data(using: .utf8),
+              let response = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return response.count == 1 && response["title"] is String
     }
 
     static func projectRoot(cwd: String, transcriptPath: String) -> String {
