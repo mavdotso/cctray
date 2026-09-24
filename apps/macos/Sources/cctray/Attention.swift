@@ -24,10 +24,18 @@ enum AttentionParser {
                                   message: raw["last-assistant-message"] as? String ?? "",
                                   agent: .codex)
         }
+        guard !hasAgentsRunning(raw) else { return nil }
         return AttentionEvent(tty: obj["tty"] as? String ?? "",
                               cwd: projectRoot(cwd: raw["cwd"] as? String ?? "",
                                                transcriptPath: raw["transcript_path"] as? String ?? ""),
                               message: raw["last_assistant_message"] as? String ?? "")
+    }
+
+    // Shells and monitors are left out: dev servers and watchers never finish.
+    private static func hasAgentsRunning(_ raw: [String: Any]) -> Bool {
+        let agentTypes: Set = ["subagent", "workflow", "teammate", "cloud session"]
+        let tasks = raw["background_tasks"] as? [[String: Any]] ?? []
+        return tasks.contains { agentTypes.contains($0["type"] as? String ?? "") }
     }
 
     private static func isCodexTitleGeneration(_ raw: [String: Any]) -> Bool {
