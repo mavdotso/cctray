@@ -5,6 +5,8 @@ struct CleanWorktreesView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Set<String> = []
     @State private var working = false
+    @State private var confirming = false
+    @State private var listHeight: CGFloat = 0
     @State private var result: (removed: Int, skipped: Int, freedKB: Int)?
 
     var body: some View {
@@ -15,47 +17,50 @@ struct CleanWorktreesView: View {
                 pickerView
             }
         }
-        .frame(width: 420)
+        .frame(width: 440)
         .modifier(SettingsWindowBackground())
         .toolbarBackground(.hidden, for: .windowToolbar)
         .onAppear { selected = Set(worktrees.stale.filter(\.isRemovable).map(\.id)) }
     }
 
+    private var selection: [Worktree] {
+        worktrees.stale.filter { selected.contains($0.id) }
+    }
+
     private var pickerView: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    if worktrees.stale.isEmpty {
-                        Text("Nothing stale to clean.")
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        ForEach(worktrees.stale) { wt in
-                            row(wt)
-                        }
-                    }
-                } header: {
-                    Text("Stale worktrees")
-                } footer: {
-                    Text("No commits for \(Worktrees.staleDays)+ days. Session data goes too.")
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Stale worktrees")
+                    .font(.headline)
+                Text("No commits for \(Worktrees.staleDays)+ days. Removing one also deletes its session data.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Group {
+                if worktrees.stale.isEmpty {
+                    Text("Nothing stale to clean.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                } else {
+                    list
                 }
             }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-            .scrollDisabled(worktrees.stale.count <= 6)
-            .frame(height: min(CGFloat(max(worktrees.stale.count, 1)) * 44 + 96, 400))
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(.separator))
             .disabled(working)
 
             HStack {
                 Text(footerText)
-                    .font(.caption.monospacedDigit())
+                    .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                     .disabled(working)
                 Button {
-                    run()
+                    if selection.contains(where: \.dirty) { confirming = true } else { run() }
                 } label: {
                     if working {
                         ProgressView().controlSize(.small).frame(width: 52)
@@ -67,39 +72,98 @@ struct CleanWorktreesView: View {
                 .keyboardShortcut(.defaultAction)
                 .disabled(selected.isEmpty || working)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 6)
-            .padding(.bottom, 16)
         }
+        .padding(20)
+        .confirmationDialog(confirmTitle, isPresented: $confirming) {
+            Button("Remove", role: .destructive) { run() }
+        } message: {
+            Text("Their uncommitted changes will be lost. You cannot undo this.")
+        }
+    }
+
+    private var list: some View {
+        VStack(spacing: 0) {
+            Toggle(sources: worktrees.stale.map { isSelected($0) }, isOn: \.self) {
+                HStack {
+                    Text("Select all")
+                    Spacer()
+                    Text(worktrees.stale.count == 1 ? "1 worktree" : "\(worktrees.stale.count) worktrees")
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .toggleStyle(.checkbox)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(worktrees.stale) { wt in
+                        if wt.id != worktrees.stale.first?.id { Divider().padding(.leading, 34) }
+                        row(wt)
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
+            }
+            .frame(height: min(listHeight, 360))
+            .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+
+    private func isSelected(_ wt: Worktree) -> Binding<Bool> {
+        Binding(
+            get: { selected.contains(wt.id) },
+            set: { if $0 { selected.insert(wt.id) } else { selected.remove(wt.id) } }
+        )
     }
 
     private func row(_ wt: Worktree) -> some View {
-        Toggle(isOn: Binding(
-            get: { selected.contains(wt.id) },
-            set: { if $0 { selected.insert(wt.id) } else { selected.remove(wt.id) } }
-        )) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(wt.name)
-                    .lineLimit(1)
-                Text(subtitle(wt))
+        Toggle(isOn: isSelected(wt)) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(wt.name)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    HStack(spacing: 6) {
+                        Text("\(wt.repoName) · \(wt.ageDays == 1 ? "1 day" : "\(wt.ageDays) days")")
+                            .foregroundStyle(.secondary)
+                        if wt.dirty {
+                            Label("Uncommitted changes", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                        }
+                        if wt.locked {
+                            Label("Locked", systemImage: "lock.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
                     .font(.caption)
-                    .foregroundStyle(wt.dirty || wt.locked
-                                     ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .labelStyle(.titleAndIcon)
                     .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Text(wt.sizeKB.kbSizeText)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
+            .contentShape(Rectangle())
         }
+        .toggleStyle(.checkbox)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
-    private func subtitle(_ wt: Worktree) -> String {
-        var parts = [wt.repoName, "\(wt.ageDays)d", wt.sizeKB.kbSizeText]
-        if wt.dirty { parts.append("uncommitted changes") }
-        if wt.locked { parts.append("locked") }
-        return parts.joined(separator: " · ")
+    private var confirmTitle: String {
+        let count = selection.filter(\.dirty).count
+        return count == 1
+            ? "Remove 1 worktree with uncommitted changes?"
+            : "Remove \(count) worktrees with uncommitted changes?"
     }
 
     private var footerText: String {
         if working { return "Removing \(selected.count)…" }
-        return Worktrees.footerText(for: worktrees.stale.filter { selected.contains($0.id) })
+        return Worktrees.footerText(for: selection)
     }
 
     private func run() {
