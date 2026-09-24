@@ -16,6 +16,7 @@ struct Worktree: Identifiable {
 
 enum Worktrees {
     static func footerText(for selection: [Worktree]) -> String {
+        guard !selection.isEmpty else { return "None selected" }
         let kb = selection.map(\.sizeKB).reduce(0, +)
         return "\(selection.count) selected · \(kb.kbSizeText)"
     }
