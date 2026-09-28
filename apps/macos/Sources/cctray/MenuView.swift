@@ -16,7 +16,6 @@ struct MenuView: View {
             AwakeRow(awake: state.awake)
             PreWarmRow(preWarm: state.preWarm)
             AttentionRow(attention: state.attention)
-            OrphanRow(sessions: state.sessions)
             if showAccounts {
                 GroupDivider()
                 if claudeEnabled {
@@ -25,7 +24,7 @@ struct MenuView: View {
                 if codexEnabled { CodexAccountRow(accounts: state.codexAccounts) }
             }
             SessionsSection(sessions: state.sessions)
-            WorktreeRow(worktrees: state.worktrees)
+            CleanupSection(sessions: state.sessions, worktrees: state.worktrees)
             GroupDivider()
             footer
         }
@@ -333,22 +332,39 @@ struct AccountRow: View {
     }
 }
 
-struct WorktreeRow: View {
+struct CleanupSection: View {
+    @ObservedObject var sessions: SessionModel
     @ObservedObject var worktrees: WorktreeModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        if !worktrees.stale.isEmpty {
+        if !worktrees.stale.isEmpty || !sessions.orphanPids.isEmpty {
             GroupDivider()
-            HoverRow(title: "Clean stale worktrees",
-                     action: {
-                         openWindow(id: "cleanWorktrees")
-                         NSApp.activate(ignoringOtherApps: true)
-                     }) {
-                Text("\(worktrees.stale.count)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+            if !worktrees.stale.isEmpty {
+                CountRow(title: "Clean stale worktrees", count: worktrees.stale.count) {
+                    openWindow(id: "cleanWorktrees")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
             }
+            if !sessions.orphanPids.isEmpty {
+                CountRow(title: "Kill orphaned sessions", count: sessions.orphanPids.count) {
+                    sessions.killOrphans()
+                }
+            }
+        }
+    }
+}
+
+struct CountRow: View {
+    let title: String
+    let count: Int
+    let action: () -> Void
+
+    var body: some View {
+        HoverRow(title: title, action: action) {
+            Text("\(count)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -497,23 +513,5 @@ struct CodexAccountRow: View {
         if renaming { accounts.rename(accounts.selected, to: name) }
         else { accounts.add(name: name) }
         if accounts.error == nil { editing = false }
-    }
-}
-
-struct OrphanRow: View {
-    @ObservedObject var sessions: SessionModel
-
-    var body: some View {
-        if !sessions.orphanPids.isEmpty {
-            HoverRow(title: "Kill orphaned sessions",
-                     action: { sessions.killOrphans() }) {
-                Text("\(sessions.orphanPids.count)")
-                    .font(.caption2.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(Capsule().fill(.red))
-            }
-        }
     }
 }

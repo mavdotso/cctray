@@ -44,11 +44,23 @@ struct AgentHotkeyRecorder: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 3) {
-            HStack {
-                Button(monitor == nil ? shortcut.label : "Press shortcut…") { record() }
-                    .accessibilityLabel("\(agent.name) shortcut: \(shortcut.label)")
-                if shortcut.keyCode != nil {
-                    Button("Clear") { save(.none) }.controlSize(.small)
+            HStack(spacing: 6) {
+                Button { monitor == nil ? record() : stop() } label: {
+                    Text(monitor != nil ? "Type Shortcut…" : shortcut.keyCode == nil ? "Record Shortcut" : shortcut.label)
+                        .monospacedDigit()
+                        .frame(minWidth: 110)
+                }
+                .tint(monitor == nil ? nil : .accentColor)
+                .buttonStyle(.bordered)
+                .accessibilityLabel("\(agent.name) shortcut: \(shortcut.label)")
+                if shortcut.keyCode != nil && monitor == nil {
+                    Button { save(.none) } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Clear shortcut")
+                    .accessibilityLabel("Clear \(agent.name) shortcut")
                 }
             }
             if let error { Text(error).font(.caption2).foregroundStyle(.orange) }

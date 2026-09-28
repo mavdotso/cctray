@@ -8,6 +8,8 @@ VERSION="${VERSION:-0.0.0-dev}"
 BUILD="${BUILD:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 
 FLAGS=(-c release)
+# SwiftPM records the deployment target as the SDK version, which makes macOS draw the pre-26 design.
+FLAGS+=(-Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker "$(xcrun --show-sdk-version)")
 STEPS=4
 TTY=0
 [ -t 1 ] && TTY=1

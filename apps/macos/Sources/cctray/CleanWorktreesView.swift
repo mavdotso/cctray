@@ -18,8 +18,6 @@ struct CleanWorktreesView: View {
             }
         }
         .frame(width: 440)
-        .modifier(SettingsWindowBackground())
-        .toolbarBackground(.hidden, for: .windowToolbar)
         .onAppear { selected = Set(worktrees.stale.filter(\.isRemovable).map(\.id)) }
     }
 

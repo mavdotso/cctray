@@ -4,177 +4,122 @@ import SwiftUI
 import UserNotifications
 
 struct SettingsView: View {
-    @EnvironmentObject var state: AppState
-    @AppStorage(CodingAgent.claude.enabledKey) private var claudeEnabled = true
-    @AppStorage(CodingAgent.codex.enabledKey) private var codexEnabled = true
-    @State private var recordingAgent: CodingAgent?
-    @AppStorage(PrefKey.terminalApp) private var terminalApp = TerminalApp.detectDefault().rawValue
-    @AppStorage(PrefKey.prewarmStartMin) private var startMin = ActiveHours.default.startMin
-    @AppStorage(PrefKey.prewarmEndMin) private var endMin = ActiveHours.default.endMin
-    @AppStorage(PrefKey.chimeSound) private var chime = CueSynth.defaultName
-    @AppStorage(PrefKey.chimeSilent) private var silent = false
-    @AppStorage(PrefKey.sessionDir) private var sessionDir = ""
-    @AppStorage(PrefKey.showSessions) private var showSessions = true
-    @AppStorage(PrefKey.showAccounts) private var showAccounts = true
-    @AppStorage(PrefKey.autoAwake) private var autoAwake = false
-    @AppStorage(PrefKey.staleDays) private var staleDays = Worktrees.defaultStaleDays
-    @AppStorage(PrefKey.autoClean) private var autoClean = false
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
-    @State private var notifStatus: UNAuthorizationStatus = .notDetermined
+    @State private var pane: SettingsPaneID = .general
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            launchSettings
-            automationSettings
+        NavigationSplitView {
+            List(SettingsPaneID.allCases, selection: $pane) { id in
+                Label { Text(id.title) } icon: { IconBadge(symbol: id.symbol) }
+                    .tag(id)
+            }
+            .navigationSplitViewColumnWidth(190)
+            .toolbar(removing: .sidebarToggle)
+        } detail: {
+            Group {
+                switch pane {
+                case .general: GeneralSettings()
+                case .agents: AgentSettings()
+                case .notifications: NotificationSettings()
+                case .automation: AutomationSettings()
+                }
+            }
+            .formStyle(.grouped)
         }
-        .formStyle(.grouped)
-        .scrollDisabled(true)
-        .scrollIndicators(.hidden)
-        .frame(width: 800, height: 620)
-        .modifier(SettingsWindowBackground())
-        .toolbarBackground(.hidden, for: .windowToolbar)
-        .onChange(of: claudeEnabled) { _, _ in recordingAgent = nil; state.agentSettingsChanged() }
-        .onChange(of: codexEnabled) { _, _ in recordingAgent = nil; state.agentSettingsChanged() }
+        .frame(width: 740, height: 540)
         .onAppear {
             NSApp.activate(ignoringOtherApps: true)
-            if !CueSynth.names.contains(chime) { chime = CueSynth.defaultName }
-            refreshNotifStatus()
             dropInitialFocus()
         }
     }
 
-    private var launchSettings: some View {
+    /* AppKit focuses the first text field on open; nothing should be focused. */
+    private func dropInitialFocus() {
+        DispatchQueue.main.async {
+            NSApp.windows.first { $0.title.contains("Settings") }?
+                .makeFirstResponder(nil)
+        }
+    }
+}
+
+enum SettingsPaneID: CaseIterable, Identifiable {
+    case general, agents, notifications, automation
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .agents: "Agents"
+        case .notifications: "Notifications"
+        case .automation: "Automation"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gearshape.fill"
+        case .agents: "chevron.left.forwardslash.chevron.right"
+        case .notifications: "bell.fill"
+        case .automation: "clock.arrow.circlepath"
+        }
+    }
+}
+
+struct IconBadge: View {
+    let symbol: String
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(width: 20, height: 20)
+            .background(Color.gray.gradient, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+    }
+}
+
+private struct GeneralSettings: View {
+    @AppStorage(PrefKey.terminalApp) private var terminalApp = TerminalApp.detectDefault().rawValue
+    @AppStorage(PrefKey.sessionDir) private var sessionDir = ""
+    @AppStorage(PrefKey.showSessions) private var showSessions = true
+    @AppStorage(PrefKey.showAccounts) private var showAccounts = true
+    @AppStorage(PrefKey.autoAwake) private var autoAwake = false
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+
+    var body: some View {
         Form {
-            Section("General") {
+            Section {
                 Toggle("Launch at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, on in
                         do { on ? try SMAppService.mainApp.register()
                              : try SMAppService.mainApp.unregister() }
                         catch { launchAtLogin = SMAppService.mainApp.status == .enabled }
                     }
-
                 Picker("Terminal app", selection: $terminalApp) {
                     ForEach(TerminalApp.allCases) { app in
                         Text(app.displayName).tag(app.rawValue)
                     }
                 }
+                LabeledContent {
+                    Button("Choose…") { pickFolder() }
+                } label: {
+                    Text("New sessions open in")
+                    Text(folderLabel).truncationMode(.middle)
+                }
             }
 
-            Section("Agents") {
-                Toggle("Enable Claude", isOn: $claudeEnabled)
-                LabeledContent("Claude hotkey") { AgentHotkeyRecorder(agent: .claude, recordingAgent: $recordingAgent) }
-                    .disabled(!claudeEnabled)
-                Toggle("Enable Codex", isOn: $codexEnabled)
-                LabeledContent("Codex hotkey") { AgentHotkeyRecorder(agent: .codex, recordingAgent: $recordingAgent) }
-                    .disabled(!codexEnabled)
+            Section("Menu bar") {
+                Toggle("Show running sessions", isOn: $showSessions)
+                Toggle("Show account switcher", isOn: $showAccounts)
             }
 
-            Section("New sessions") {
-                LabeledContent("Folder") {
-                    HStack(spacing: 8) {
-                        Text(folderLabel)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Button("Choose…") { pickFolder() }
-                    }
+            Section {
+                Toggle(isOn: $autoAwake) {
+                    Text("Keep Mac awake while sessions run")
+                    Text("Turns Keep Mac Awake on when a session starts and off when the last one ends.")
                 }
             }
         }
-        .scrollContentBackground(.hidden)
-        .frame(maxWidth: .infinity)
     }
 
-    private var automationSettings: some View {
-        Form {
-            Section("Sessions") {
-                Toggle("Show running sessions in menu", isOn: $showSessions)
-                Toggle("Show account switcher in menu", isOn: $showAccounts)
-                Toggle("Keep Mac awake while sessions run", isOn: $autoAwake)
-                    .help("Turns Keep Mac Awake on when a session starts and off when the last one ends.")
-            }
-
-            Section("Worktrees") {
-                LabeledContent("Stale after") {
-                    HStack(spacing: 2) {
-                        TextField("", value: $staleDays, format: .number)
-                            .textFieldStyle(.roundedBorder)
-                            .multilineTextAlignment(.center)
-                            .frame(width: 36)
-                        Stepper("", value: $staleDays, in: 1...365).labelsHidden()
-                        Text("days").foregroundStyle(.secondary).padding(.leading, 4)
-                    }
-                    .controlSize(.small)
-                }
-                Toggle("Clean stale worktrees automatically", isOn: $autoClean)
-                    .help("Removes stale worktrees that have no uncommitted changes, and their Claude session data, without asking.")
-            }
-
-            Section("Pre-warm") {
-                LabeledContent("Active hours") {
-                    HStack(spacing: 6) {
-                        MinutePicker(minutes: $startMin)
-                        Text("–").foregroundStyle(.secondary)
-                        MinutePicker(minutes: $endMin)
-                    }
-                }
-            }
-
-            Section("Attention chime") {
-                Picker("Sound", selection: $chime) {
-                    ForEach(CueSynth.names, id: \.self) { Text($0.capitalized) }
-                }
-                .onChange(of: chime) { _, s in CueSynth.play(s) }
-                .disabled(silent)
-                Toggle("Silent alerts", isOn: $silent)
-                if let error = state.attention.lastError {
-                    Text(error).font(.caption).foregroundStyle(.secondary)
-                }
-
-                LabeledContent("Notifications") {
-                    switch notifStatus {
-                    case .authorized, .provisional:
-                        Text("Enabled").foregroundStyle(.secondary)
-                    case .notDetermined:
-                        Button("Enable") {
-                            UNUserNotificationCenter.current()
-                                .requestAuthorization(options: [.alert, .sound]) { _, _ in
-                                    refreshNotifStatus()
-                                }
-                        }
-                    default:
-                        Button("Open System Settings") {
-                            if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .scrollContentBackground(.hidden)
-        .frame(maxWidth: .infinity)
-    }
-}
-
-struct SettingsWindowBackground: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.containerBackground(for: .window) {
-                Color.clear
-                    .glassEffect(.regular, in: Rectangle())
-                    .ignoresSafeArea()
-            }
-        } else if #available(macOS 15.0, *) {
-            content.containerBackground(.regularMaterial, for: .window)
-        } else {
-            content.background(.regularMaterial)
-        }
-    }
-}
-
-extension SettingsView {
     private var folderLabel: String {
         let dir = TerminalLauncher.sessionDirectory ?? NSHomeDirectory()
         return (dir as NSString).abbreviatingWithTildeInPath
@@ -190,18 +135,156 @@ extension SettingsView {
             sessionDir = url.path
         }
     }
+}
 
-    /* AppKit focuses the first text field on open; nothing should be focused. */
-    private func dropInitialFocus() {
-        DispatchQueue.main.async {
-            NSApp.windows.first { $0.title.contains("Settings") }?
-                .makeFirstResponder(nil)
+private struct AgentSettings: View {
+    @EnvironmentObject var state: AppState
+    @AppStorage(CodingAgent.claude.enabledKey) private var claudeEnabled = true
+    @AppStorage(CodingAgent.codex.enabledKey) private var codexEnabled = true
+    @State private var recordingAgent: CodingAgent?
+
+    var body: some View {
+        Form {
+            agentSection(.claude, isOn: $claudeEnabled)
+            agentSection(.codex, isOn: $codexEnabled)
+        }
+        .onChange(of: claudeEnabled) { _, _ in recordingAgent = nil; state.agentSettingsChanged() }
+        .onChange(of: codexEnabled) { _, _ in recordingAgent = nil; state.agentSettingsChanged() }
+    }
+
+    private func agentSection(_ agent: CodingAgent, isOn: Binding<Bool>) -> some View {
+        Section(agent.name) {
+            Toggle(isOn: isOn) {
+                Text("Enable \(agent.name)")
+                Text("Tracks usage, sessions, and accounts. Sends alerts and pre-warm prompts.")
+            }
+            LabeledContent {
+                AgentHotkeyRecorder(agent: agent, recordingAgent: $recordingAgent)
+            } label: {
+                Text("New session shortcut")
+                Text("Opens \(agent.name) in a new terminal from any app.")
+            }
+            .disabled(!isOn.wrappedValue)
+        }
+    }
+}
+
+private struct NotificationSettings: View {
+    @EnvironmentObject var state: AppState
+    @AppStorage(PrefKey.chimeSound) private var chime = CueSynth.defaultName
+    @AppStorage(PrefKey.chimeSilent) private var silent = false
+    @State private var notifStatus: UNAuthorizationStatus = .notDetermined
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent {
+                    permissionControl
+                } label: {
+                    Text("System notifications")
+                    Text("cctray tells you when an agent finishes and needs you.")
+                }
+            }
+
+            Section("Attention chime") {
+                AttentionToggle(attention: state.attention)
+                Toggle(isOn: $silent) {
+                    Text("Silent alerts")
+                    Text("Show the notification without a sound.")
+                }
+                Picker("Sound", selection: $chime) {
+                    ForEach(CueSynth.names, id: \.self) { Text($0.capitalized) }
+                }
+                .onChange(of: chime) { _, s in CueSynth.play(s) }
+                .disabled(silent)
+            }
+
+            if let error = state.attention.lastError {
+                Section {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+            }
+        }
+        .onAppear {
+            if !CueSynth.names.contains(chime) { chime = CueSynth.defaultName }
+            refreshNotifStatus()
+        }
+    }
+
+    @ViewBuilder
+    private var permissionControl: some View {
+        switch notifStatus {
+        case .authorized, .provisional:
+            Label("On", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .notDetermined:
+            Button("Turn On") {
+                UNUserNotificationCenter.current()
+                    .requestAuthorization(options: [.alert, .sound]) { _, _ in refreshNotifStatus() }
+            }
+        default:
+            Button("Open System Settings") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            }
         }
     }
 
     private func refreshNotifStatus() {
         UNUserNotificationCenter.current().getNotificationSettings { s in
             DispatchQueue.main.async { notifStatus = s.authorizationStatus }
+        }
+    }
+}
+
+private struct AttentionToggle: View {
+    @ObservedObject var attention: AttentionCenter
+
+    var body: some View {
+        Toggle(isOn: $attention.isOn) {
+            Text("Alert when an agent finishes")
+            Text("Skips the alert when that terminal is in front.")
+        }
+    }
+}
+
+private struct AutomationSettings: View {
+    @AppStorage(PrefKey.prewarmStartMin) private var startMin = ActiveHours.default.startMin
+    @AppStorage(PrefKey.prewarmEndMin) private var endMin = ActiveHours.default.endMin
+    @AppStorage(PrefKey.staleDays) private var staleDays = Worktrees.defaultStaleDays
+    @AppStorage(PrefKey.autoClean) private var autoClean = false
+
+    var body: some View {
+        Form {
+            Section("Pre-warm") {
+                LabeledContent {
+                    HStack(spacing: 6) {
+                        MinutePicker(minutes: $startMin)
+                        Text("to").foregroundStyle(.secondary)
+                        MinutePicker(minutes: $endMin)
+                    }
+                } label: {
+                    Text("Active hours")
+                    Text("Starts a new session window after a reset, only during these hours.")
+                }
+            }
+
+            Section("Worktrees") {
+                LabeledContent("Stale after") {
+                    HStack(spacing: 4) {
+                        Text(staleDays == 1 ? "1 day" : "\(staleDays) days")
+                            .monospacedDigit()
+                        Stepper("Stale after", value: $staleDays, in: 1...365)
+                            .labelsHidden()
+                    }
+                }
+                Toggle(isOn: $autoClean) {
+                    Text("Clean stale worktrees automatically")
+                    Text("Removes stale worktrees with no uncommitted changes, and their session data, without asking.")
+                }
+            }
         }
     }
 }

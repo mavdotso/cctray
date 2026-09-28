@@ -89,6 +89,7 @@ struct cctrayApp: App {
             Image(nsImage: AppState.trayIcon)
         }
         .menuBarExtraStyle(.window)
+        .windowResizability(.contentSize)
 
         Window("Clean Worktrees", id: "cleanWorktrees") {
             CleanWorktreesView(worktrees: state.worktrees)
