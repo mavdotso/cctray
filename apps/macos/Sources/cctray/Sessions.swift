@@ -3,20 +3,18 @@ import Foundation
 struct AgentSession: Identifiable {
     let pid: Int32
     let tty: String
-    let cpu: Double
     let elapsed: TimeInterval
     var agent: CodingAgent = .claude
     var cwd = ""
     var title: String?
-    var codexWorking: Bool?
+    var isWorking = false
     var id: Int32 { pid }
-    var isWorking: Bool { agent == .codex ? (codexWorking ?? (cpu >= 5)) : cpu >= 5 }
 }
 
 enum Sessions {
     static func active(_ rows: [ProcRow]) -> [AgentSession] {
         rows.filter { $0.isInteractive && $0.tty != "??" && $0.ppid != 1 }
-            .map { AgentSession(pid: $0.pid, tty: $0.tty, cpu: $0.cpu,
+            .map { AgentSession(pid: $0.pid, tty: $0.tty,
                                  elapsed: $0.elapsed, agent: $0.agent ?? .claude) }
             .sorted { ($0.elapsed, $0.tty) < ($1.elapsed, $1.tty) }
     }
@@ -75,6 +73,11 @@ final class SessionModel: ObservableObject {
         scanning = false
         sessions = found.sessions
         orphanPids = found.orphans
+    }
+
+    func hookLine(_ line: String) {
+        guard discovery.claude.record(line: line), menuTimer != nil else { return }
+        Task { await refresh() }
     }
 
     func startMenuUpdates() {

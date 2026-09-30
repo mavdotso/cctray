@@ -15,24 +15,24 @@ final class SessionDiscovery {
     }
 
     private let activity = CodexActivity()
+    let claude = ClaudeActivity()
 
     func scan() -> (sessions: [AgentSession], orphans: [Int32]) {
         let found = Snapshot.capture()
         var sessions = Sessions.active(found.rows).filter { $0.agent.isEnabled }
+        claude.prune(keeping: Set(sessions.map(\.pid)))
         var used = Set<String>()
         for i in sessions.indices {
             sessions[i].cwd = found.cwds[sessions[i].pid] ?? ""
             if sessions[i].agent == .claude {
-                sessions[i].title = title(forCwd: sessions[i].cwd, used: &used)
+                if let state = claude.state(pid: sessions[i].pid) {
+                    sessions[i].title = Self.head(state.transcript).flatMap(Self.titleFromTranscript)
+                    sessions[i].isWorking = state.working
+                }
             } else if let path = codexTranscriptPath(pid: sessions[i].pid, cwd: sessions[i].cwd,
                 elapsed: sessions[i].elapsed, rows: found.rows, openFiles: found.openFiles, used: &used) {
-                sessions[i].codexWorking = activity.working(at: path)
-                if let file = FileHandle(forReadingAtPath: path) {
-                    defer { try? file.close() }
-                    if let data = try? file.read(upToCount: 1_048_576) {
-                        sessions[i].title = Self.codexTitleFromTranscript(String(decoding: data, as: UTF8.self))
-                    }
-                }
+                sessions[i].isWorking = activity.working(at: path) ?? false
+                sessions[i].title = Self.head(path).flatMap(Self.codexTitleFromTranscript)
             }
         }
         return (sessions, CodingAgent.claude.isEnabled ? Sessions.orphans(found.rows) : [])
@@ -45,7 +45,7 @@ final class SessionDiscovery {
             $0.pid == pid || ($0.agent == .codex && Proc.ancestor(of: $0.pid, parents: parents, match: { $0 == pid }) != nil)
         }.map(\.pid)
         let openPath = related.flatMap { openFiles[$0] ?? [] }.first {
-            !used.contains($0) && Self.codexMetadata(at: $0)?["source"] as? String == "cli"
+            !used.contains($0) && Self.codexMetadata(at: $0).map(Self.isCodexCLI) == true
         }
         let path = openPath ?? codexTranscript(cwd: cwd, elapsed: elapsed, used: used)
         guard let path else { return nil }
@@ -69,7 +69,7 @@ final class SessionDiscovery {
         }
         for (path, _) in candidates.sorted(by: { $0.1 > $1.1 }).prefix(100) {
             guard let payload = Self.codexMetadata(at: path),
-                  payload["source"] as? String == "cli",
+                  Self.isCodexCLI(payload),
                   payload["cwd"] as? String == cwd else { continue }
             return path
         }
@@ -104,19 +104,16 @@ final class SessionDiscovery {
         return nil
     }
 
-    private func title(forCwd cwd: String, used: inout Set<String>) -> String? {
-        let dir = ClaudePaths.projectDir(for: cwd)
-        guard let files = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return nil }
-        let jsonls = files.filter { $0.hasSuffix(".jsonl") }
-            .map { (path: dir + "/" + $0, at: Self.mtime(dir + "/" + $0)) }
-            .sorted { $0.at > $1.at }
-            .map(\.path)
-        guard let file = jsonls.first(where: { !used.contains($0) }) else { return nil }
-        used.insert(file)
-        guard let fh = FileHandle(forReadingAtPath: file),
-              let data = try? fh.read(upToCount: 1_048_576) else { return nil }
-        try? fh.close()
-        return Self.titleFromTranscript(String(decoding: data, as: UTF8.self))
+    /* Codex 0.159+ TUI sessions run through the app server and record source "vscode". */
+    static func isCodexCLI(_ payload: [String: Any]) -> Bool {
+        let source = payload["source"] as? String
+        return source == "cli" || (source == "vscode" && payload["originator"] as? String == "codex-tui")
+    }
+
+    private static func head(_ path: String) -> String? {
+        guard let fh = FileHandle(forReadingAtPath: path) else { return nil }
+        defer { try? fh.close() }
+        return (try? fh.read(upToCount: 1_048_576)).map { String(decoding: $0, as: UTF8.self) }
     }
 
     static func titleFromTranscript(_ head: String) -> String? {
@@ -145,10 +142,5 @@ final class SessionDiscovery {
               !t.hasPrefix("Base directory for this skill:")
         else { return nil }
         return String(t.replacingOccurrences(of: "\n", with: " ").prefix(60))
-    }
-
-    private static func mtime(_ path: String) -> Date {
-        (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date)
-            ?? .distantPast
     }
 }

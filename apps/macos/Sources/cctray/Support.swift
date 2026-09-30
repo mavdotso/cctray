@@ -47,7 +47,6 @@ struct ProcRow: Equatable {
     let pid: Int32
     let ppid: Int32
     let tty: String
-    let cpu: Double
     let elapsed: TimeInterval
     let comm: String
     var arguments = ""
@@ -84,11 +83,10 @@ enum Proc {
     static func parse(psOutput: String) -> [ProcRow] {
         psOutput.split(separator: "\n").compactMap { line in
             let p = line.split(separator: " ", omittingEmptySubsequences: true)
-            guard p.count >= 6, let pid = Int32(p[0]), let ppid = Int32(p[1]),
-                  let cpu = Double(p[3]) else { return nil }
-            return ProcRow(pid: pid, ppid: ppid, tty: String(p[2]), cpu: cpu,
-                           elapsed: parseElapsed(String(p[4])),
-                           comm: p[5...].joined(separator: " "))
+            guard p.count >= 5, let pid = Int32(p[0]), let ppid = Int32(p[1]) else { return nil }
+            return ProcRow(pid: pid, ppid: ppid, tty: String(p[2]),
+                           elapsed: parseElapsed(String(p[3])),
+                           comm: p[4...].joined(separator: " "))
         }
     }
 
@@ -106,7 +104,7 @@ enum Proc {
 
     static func all() -> [ProcRow] {
         var rows = parse(psOutput: Shell.capture(
-            "/bin/ps", ["-axo", "pid=,ppid=,tty=,%cpu=,etime=,comm="]))
+            "/bin/ps", ["-axo", "pid=,ppid=,tty=,etime=,comm="]))
         let commands = Shell.capture("/bin/ps", ["-axo", "pid=,args="])
         var arguments: [Int32: String] = [:]
         for line in commands.split(separator: "\n") {
