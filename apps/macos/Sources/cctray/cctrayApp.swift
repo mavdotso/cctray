@@ -28,6 +28,7 @@ final class AppState: ObservableObject {
                 self?.launchError = TerminalLauncher.newSession(agent: agent)
             }
         }
+        attention.onLine = { [weak sessions] line in sessions?.hookLine(line) }
         attention.start()
         sessions.startAutoAwake(awake: awake)
         TerminalLauncher.requestPermissionsOnFirstLaunch()

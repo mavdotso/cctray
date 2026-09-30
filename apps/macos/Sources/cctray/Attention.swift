@@ -24,7 +24,8 @@ enum AttentionParser {
                                   message: raw["last-assistant-message"] as? String ?? "",
                                   agent: .codex)
         }
-        guard !hasAgentsRunning(raw) else { return nil }
+        guard obj["tty"] as? String != "??",
+              raw["hook_event_name"] as? String ?? "Stop" == "Stop", !hasAgentsRunning(raw) else { return nil }
         return AttentionEvent(tty: obj["tty"] as? String ?? "",
                               cwd: projectRoot(cwd: raw["cwd"] as? String ?? "",
                                                transcriptPath: raw["transcript_path"] as? String ?? ""),
@@ -108,15 +109,16 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
     private var source: DispatchSourceFileSystemObject?
     private var fd: Int32 = -1
     private var tail = LogTail()
+    var onLine: ((String) -> Void)?
 
     func apply() {
         do {
-            try HookInstaller.setEnabled(isOn && CodingAgent.claude.isEnabled)
+            try HookInstaller.setEnabled(CodingAgent.claude.isEnabled)
             lastError = nil
         } catch HookInstaller.HookError.malformedSettings {
-            lastError = "Chime setup failed: ~/.claude/settings.json is not valid JSON"
+            lastError = "Claude hook setup failed: ~/.claude/settings.json is not valid JSON"
         } catch {
-            lastError = "Chime setup failed: cannot write ~/.claude/settings.json"
+            lastError = "Claude hook setup failed: cannot write ~/.claude/settings.json"
         }
         do {
             try CodexHook.setEnabled(isOn && CodingAgent.codex.isEnabled)
@@ -125,14 +127,14 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
             }
         }
         catch { lastError = error.localizedDescription }
-        if isOn { startWatching() } else { stopWatching() }
+        if isOn || CodingAgent.claude.isEnabled { startWatching() } else { stopWatching() }
     }
 
     func start() {
         UNUserNotificationCenter.current().delegate = self
         UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound]) { _, _ in }
-        if isOn { apply() }
+        apply()
     }
 
     private func startWatching() {
@@ -155,13 +157,14 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
 
     private func drain() {
         for line in tail.lines(fromFileAt: HookInstaller.attentionLogPath) {
+            onLine?(line)
             guard let event = AttentionParser.parse(line: line) else { continue }
             handle(event)
         }
     }
 
     private func handle(_ event: AttentionEvent) {
-        guard event.agent.isEnabled else { return }
+        guard isOn, event.agent.isEnabled else { return }
         guard let front = TerminalLauncher.frontApp() else { deliver(event); return }
         Task { [weak self] in
             let looking = await Task.detached {

@@ -20,7 +20,7 @@ enum HookInstaller {
     IN=$(cat)
     [ -z "$IN" ] && IN='{}'
     TTY=$(ps -o tty= -p $PPID | tr -d ' ')
-    printf '{"tty":"%s","raw":%s}\\n' "$TTY" "$IN" >> "\(attentionLogPath)"
+    printf '{"tty":"%s","pid":%s,"raw":%s}\\n' "$TTY" "$PPID" "$IN" >> "\(attentionLogPath)"
     """
 
     static let quotedHookScriptPath = "\"\(hookScriptPath)\""
@@ -34,10 +34,14 @@ enum HookInstaller {
         return inner.contains { $0["command"] as? String == quotedHookScriptPath }
     }
 
+    static let events = ["Stop", "UserPromptSubmit"]
+
     private static func stripOurs(_ hooks: inout [String: Any]) {
-        guard let entries = hooks["Stop"] as? [[String: Any]] else { return }
-        let kept = entries.filter { !isOurs($0) }
-        if kept.isEmpty { hooks.removeValue(forKey: "Stop") } else { hooks["Stop"] = kept }
+        for event in events {
+            guard let entries = hooks[event] as? [[String: Any]] else { continue }
+            let kept = entries.filter { !isOurs($0) }
+            if kept.isEmpty { hooks.removeValue(forKey: event) } else { hooks[event] = kept }
+        }
     }
 
     private static func encode(_ obj: [String: Any]) throws -> Data {
@@ -49,7 +53,9 @@ enum HookInstaller {
         var obj = try settingsObject(json)
         var hooks = obj["hooks"] as? [String: Any] ?? [:]
         stripOurs(&hooks)
-        hooks["Stop"] = (hooks["Stop"] as? [[String: Any]] ?? []) + [ourEntry]
+        for event in events {
+            hooks[event] = (hooks[event] as? [[String: Any]] ?? []) + [ourEntry]
+        }
         obj["hooks"] = hooks
         return try encode(obj)
     }
