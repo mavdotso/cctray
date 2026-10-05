@@ -38,21 +38,50 @@ enum AccountNaming {
 
 @MainActor
 final class AccountStore: ObservableObject {
-    @Published var profiles: [String] =
-        UserDefaults.standard.stringArray(forKey: PrefKey.accountProfiles) ?? []
-    @Published var active: String? =
-        UserDefaults.standard.string(forKey: PrefKey.accountActive)
+    @Published var profiles: [String]
+    @Published var active: String?
     @Published var statusText: String?
-    @Published var currentEmail: String? = ClaudeConfig.currentEmail()
+    @Published var currentEmail: String?
     @Published var isAddingAccount = false
     @Published var mismatch: String?
     @Published var usageByProfile: [String: String] = [:]
     @Published var unsavedLogin: String?
     private var lastProfileScan = Date.distantPast
-    let usageModel = UsageModel()
+    private let defaults: UserDefaults
+    private let storage: ClaudeLoginStorage
+    private let isEnabled: () -> Bool
+    private let launchLogin: () -> String?
+    private let usageClient: ClaudeUsageClient
+    let logins: ClaudeLoginManager
+    let usageModel: UsageModel
+    @Published private(set) var isSwitchingAccount = false
+    @Published private(set) var needsLogin = Set<String>()
     private let loginPoll: Duration = .seconds(2)
     private let loginTimeout: Duration = .seconds(600)
     private var addTask: Task<Void, Never>?
+    private var loginGeneration = 0
+
+    init(defaults: UserDefaults = .standard, storage: ClaudeLoginStorage = .live,
+         isEnabled: @escaping () -> Bool = { CodingAgent.claude.isEnabled },
+         launchLogin: @escaping () -> String? = TerminalLauncher.newLogin,
+         refresh: @escaping (ClaudeLogin) async -> ClaudeLoginManager.Renewal = ClaudeOAuth.refresh,
+         fetch: @escaping (String) async throws -> (Usage, Data) = { try await fetchUsage(token: $0) }) {
+        self.defaults = defaults
+        self.storage = storage
+        self.isEnabled = isEnabled
+        self.launchLogin = launchLogin
+        profiles = defaults.stringArray(forKey: PrefKey.accountProfiles) ?? []
+        active = defaults.string(forKey: PrefKey.accountActive)
+        currentEmail = storage.currentEmail()
+        let logins = ClaudeLoginManager(read: storage.read, write: storage.write, sources: {
+            [.current] + (defaults.stringArray(forKey: PrefKey.accountProfiles) ?? []).map(ClaudeLoginStorage.Source.profile)
+        }, refresh: refresh)
+        self.logins = logins
+        let client = ClaudeUsageClient(logins: logins, fetch: fetch)
+        usageClient = client
+        usageModel = UsageModel(client: client, defaults: defaults,
+                                currentAccount: storage.currentEmail, isEnabled: isEnabled)
+    }
 
     static func mismatchWarning(active: String?, expected: String?, live: String?) -> String? {
         guard let active, let expected, let live, expected != live else { return nil }
@@ -60,7 +89,7 @@ final class AccountStore: ObservableObject {
     }
 
     func refreshIdentity() {
-        let live = ClaudeConfig.currentEmail()
+        let live = storage.currentEmail()
         if live != currentEmail { usageModel.accountChanged() }
         currentEmail = live
         mismatch = Self.mismatchWarning(active: active,
@@ -69,41 +98,44 @@ final class AccountStore: ObservableObject {
         unsavedLogin = loginToPreserve()
     }
 
-    private func persist() {
-        UserDefaults.standard.set(profiles, forKey: PrefKey.accountProfiles)
-        UserDefaults.standard.set(active, forKey: PrefKey.accountActive)
+    func maintainLogins() async {
+        guard isEnabled(), !isAddingAccount, !isSwitchingAccount else { return }
+        if defaults.string(forKey: PrefKey.claudeDeletedLogin) != storage.currentEmail(),
+           let name = loginToPreserve() { saveCurrent(as: name) }
+        refreshIdentity()
+        if let live = storage.read(.current),
+           let match = profiles.first(where: { name in
+               storage.read(.profile(name)).map(live.matchesAccount) == true
+           }), active != match {
+            active = match
+            persist()
+            refreshIdentity()
+        }
+        let current = await logins.token(for: .current)
+        let storageWarning = "Could not save the renewed login. Will retry."
+        if case .failure(.storage) = current { statusText = storageWarning }
+        else if statusText == storageWarning { statusText = nil }
+        for name in profiles {
+            guard isEnabled(), !isAddingAccount, !isSwitchingAccount else { return }
+            _ = await profileToken(name)
+        }
     }
 
-    nonisolated func profileService(_ name: String) -> String { "cctray-profile-\(name)" }
+    private func persist() {
+        defaults.set(profiles, forKey: PrefKey.accountProfiles)
+        defaults.set(active, forKey: PrefKey.accountActive)
+    }
 
-    /* Every failure string here is shown to the user as the profile's menu label. */
-    enum ProfileToken { case usable(String), failed(String) }
-
-    /* Stores the rotated token before using it, so a keychain failure loses nothing. */
-    nonisolated func profileToken(_ name: String) async -> ProfileToken {
-        guard var payload = readProfile(name),
-              let encoded = payload["credentials"] as? String,
-              let creds = Data(base64Encoded: encoded),
-              var file = try? JSONSerialization.jsonObject(with: creds) as? [String: Any],
-              let oauth = file["claudeAiOauth"] as? [String: Any]
-        else { return .failed("not saved") }
-        if !ClaudeOAuth.isExpired(oauth) {
-            guard let token = oauth["accessToken"] as? String else { return .failed("sign in again") }
-            return .usable(token)
+    func profileToken(_ name: String, rejectedToken: String? = nil) async -> Result<String, ClaudeLoginError> {
+        let result = await logins.token(for: .profile(name), rejectedToken: rejectedToken)
+        guard profiles.contains(name) else { return .failure(.notSaved) }
+        switch result {
+        case .success: needsLogin.remove(name)
+        case .failure(let error):
+            if error == .signIn { needsLogin.insert(name) }
+            usageByProfile[name] = error.label
         }
-        let fresh: [String: Any]
-        switch await ClaudeOAuth.refresh(oauth) {
-        case .ok(let updated): fresh = updated
-        case .failed(let why): return .failed(why)
-        }
-        guard let token = fresh["accessToken"] as? String else { return .failed("not available") }
-        file["claudeAiOauth"] = fresh
-        guard let encodedFile = try? JSONSerialization.data(withJSONObject: file) else {
-            return .failed("not available")
-        }
-        payload["credentials"] = encodedFile.base64EncodedString()
-        guard writeProfile(name, payload: payload) else { return .failed("keychain error") }
-        return .usable(token)
+        return result
     }
 
     nonisolated static func usageSummary(_ usage: Usage) -> String {
@@ -122,14 +154,16 @@ final class AccountStore: ObservableObject {
         return "\(short)  \(summary)"
     }
 
-    nonisolated private func profileSummary(_ name: String) async -> String {
-        switch await profileToken(name) {
-        case .failed(let why): return why
-        case .usable(let token):
-            do { return Self.usageSummary(try await fetchUsage(token: token).0) }
-            catch UsageFetchError.http(401) { return "sign in again" }
-            catch UsageFetchError.http(429) { return "rate limited" }
-            catch { return "not available" }
+    private func profileSummary(_ name: String) async -> String {
+        let result = await usageClient.read(for: .profile(name))
+        guard !Task.isCancelled, isEnabled(), profiles.contains(name) else { return "not available" }
+        switch result {
+        case .success(let (usage, _)):
+            needsLogin.remove(name)
+            return Self.usageSummary(usage)
+        case .failure(let error):
+            if error == .login(.signIn) { needsLogin.insert(name) }
+            return error.label
         }
     }
 
@@ -143,60 +177,50 @@ final class AccountStore: ObservableObject {
         if mismatch == nil, let active, let usage = usageModel.usage {
             summaries[active] = Self.usageSummary(usage)
         }
-        await withTaskGroup(of: (String, String).self) { group in
-            for name in profiles where name != active {
-                group.addTask { [self] in (name, await profileSummary(name)) }
-            }
-            for await pair in group { summaries[pair.0] = pair.1 }
+        for name in scannedProfiles where name != scannedActive {
+            guard !Task.isCancelled, isEnabled() else { break }
+            summaries[name] = await profileSummary(name)
         }
-        /* Closing the menu cancels this, which fails every request in flight.
-           Those are not real failures, so drop them and let the next open retry. */
-        guard !Task.isCancelled, profiles == scannedProfiles, active == scannedActive else {
+        /* Discard a closed menu's results; shared requests still finish. */
+        guard !Task.isCancelled, isEnabled(), profiles == scannedProfiles, active == scannedActive else {
             lastProfileScan = .distantPast
             return
         }
         usageByProfile.merge(summaries) { _, new in new }
     }
 
-    nonisolated func readProfile(_ name: String) -> [String: Any]? {
-        guard let data = Keychain.read(service: profileService(name)) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-    }
-
     func profileEmail(_ name: String) -> String? {
-        (readProfile(name)?["oauthAccount"] as? [String: Any])?["emailAddress"] as? String
+        (storage.readProfile(name)?["oauthAccount"] as? [String: Any])?["emailAddress"] as? String
     }
 
-    private nonisolated func writeProfile(_ name: String, payload: [String: Any]) -> Bool {
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return false }
-        return Keychain.write(service: profileService(name), data: data)
-    }
-
-    func saveCurrent(as name: String) {
+    @discardableResult
+    func saveCurrent(as name: String) -> Bool {
         let clean = name.trimmingCharacters(in: .whitespaces)
-        guard !clean.isEmpty else { return }
-        guard let creds = ClaudeKeychain.readRaw(),
-              let configData = FileManager.default.contents(atPath: ClaudeConfig.path),
+        guard !clean.isEmpty else { return false }
+        guard let creds = storage.readCredentials(), let configData = storage.readConfiguration(),
               let account = ClaudeConfig.readOauthAccount(fromClaudeJSON: configData)
         else {
             statusText = "Save failed: no Claude Code login found"
-            return
+            return false
         }
+        let replaced = profiles.contains(clean) ? profileEmail(clean) : nil
         let payload: [String: Any] = [
             "credentials": creds.base64EncodedString(),
             "oauthAccount": account,
         ]
-        guard writeProfile(clean, payload: payload) else {
+        guard storage.writeProfile(clean, payload) else {
             statusText = "Save failed: keychain write error"
-            return
+            return false
         }
-        let replaced = profiles.contains(clean) ? profileEmail(clean) : nil
         if !profiles.contains(clean) { profiles.append(clean) }
         active = clean
+        defaults.removeObject(forKey: PrefKey.claudeDeletedLogin)
+        needsLogin.remove(clean)
         lastProfileScan = .distantPast
         refreshIdentity()
         statusText = replaced.flatMap { $0 == currentEmail ? nil : "Replaced \(clean) — was \($0)" }
         persist()
+        return true
     }
 
     static func mayOverwrite(profileEmail: String?, liveEmail: String?) -> Bool {
@@ -204,42 +228,36 @@ final class AccountStore: ObservableObject {
         return profileEmail == liveEmail
     }
 
-    /* The CLI rotates the live tokens while a profile is active. Fold them back
-       into that profile before switching away, or its copy is left behind. */
-    private func syncActiveProfile() {
-        guard let name = active, profiles.contains(name),
-              let creds = ClaudeKeychain.readRaw(),
-              let configData = FileManager.default.contents(atPath: ClaudeConfig.path),
-              let account = ClaudeConfig.readOauthAccount(fromClaudeJSON: configData),
-              Self.mayOverwrite(profileEmail: profileEmail(name),
-                                liveEmail: account["emailAddress"] as? String)
-        else { return }
-        _ = writeProfile(name, payload: [
-            "credentials": creds.base64EncodedString(),
-            "oauthAccount": account,
-        ])
+    private func preserveCurrent() async -> Bool {
+        guard storage.currentEmail() == nil || storage.read(.current) != nil else { return false }
+        if let name = loginToPreserve() { saveCurrent(as: name) }
+        guard loginToPreserve() == nil else { return false }
+        return await logins.synchronizeCurrent()
     }
 
-    func activate(_ name: String) {
-        syncActiveProfile()
-        guard let payload = readProfile(name),
-              let b64 = payload["credentials"] as? String,
-              let creds = Data(base64Encoded: b64),
-              let account = payload["oauthAccount"] as? [String: Any]
-        else {
-            statusText = "Switch failed: profile not readable"
+    func activate(_ name: String) async {
+        guard !isAddingAccount, !isSwitchingAccount, profiles.contains(name) else { return }
+        isSwitchingAccount = true
+        defer { isSwitchingAccount = false }
+        statusText = "Switching to \(name)…"
+        guard await preserveCurrent() else {
+            statusText = "Switch failed: could not save the current login"
             return
         }
-        guard ClaudeKeychain.writeRaw(creds) else {
-            statusText = "Switch failed: keychain write error"
+        if case .failure(let error) = await profileToken(name) {
+            statusText = "\(name): \(error.label)"
             return
         }
-        do {
-            let current = FileManager.default.contents(atPath: ClaudeConfig.path) ?? Data("{}".utf8)
-            let updated = try ClaudeConfig.replaceOauthAccount(inClaudeJSON: current, with: account)
-            try updated.write(to: URL(fileURLWithPath: ClaudeConfig.path), options: .atomic)
-        } catch {
-            statusText = "Switch failed: cannot write ~/.claude.json"
+        guard await preserveCurrent() else {
+            statusText = "Switch failed: could not save the current login"
+            return
+        }
+        applyProfile(name)
+    }
+
+    private func applyProfile(_ name: String) {
+        if case .failure(let error) = storage.apply(name) {
+            statusText = "Switch failed: \(error.label)"
             return
         }
         active = name
@@ -250,7 +268,8 @@ final class AccountStore: ObservableObject {
             let outcome = await self?.usageModel.refresh(force: true)
             guard self?.active == name else { return }
             if self?.usageModel.authFailed == true {
-                self?.relogin(name)
+                self?.needsLogin.insert(name)
+                self?.statusText = "\(name): sign in again"
             } else if outcome == .skipped {
                 self?.statusText = "Switched. Usage is rate limited; it fills in when that clears."
             } else {
@@ -259,69 +278,73 @@ final class AccountStore: ObservableObject {
         }
     }
 
-    /* A dead profile is useless until you log in again, so start that for you. */
-    func relogin(_ name: String) {
-        guard addTask == nil else {
-            statusText = "\(name) needs a login. Finish the one in progress first."
-            return
-        }
-        let expected = profileEmail(name)
-        let before = ClaudeConfig.currentEmail()
-        let credentials = ClaudeKeychain.readRaw()
-        if let error = TerminalLauncher.newLogin() {
-            statusText = error
-            return
-        }
-        isAddingAccount = true
-        statusText = "\(name) needs a login — log in as \(expected ?? name)."
-        addTask = Task { [weak self] in
-            guard let result = await self?.waitForLogin(after: before, credentials: credentials) else { return }
-            self?.finishRelogin(name, expected: expected, result: result)
-        }
-    }
-
-    private func finishRelogin(_ name: String, expected: String?, result: LoginWait) {
+    private func finishLogin(_ name: String?, expected: String?, result: LoginWait) {
         guard result != .cancelled else { return }
         addTask = nil
         isAddingAccount = false
         guard case .found(let email) = result else {
-            statusText = "No login found. \(name) still needs one."
+            statusText = name.map { "No login found. \($0) still needs one." } ?? "No new login found. Nothing was saved."
             return
         }
-        guard Self.mayOverwrite(profileEmail: expected, liveEmail: email) else {
+        if let name, !Self.mayOverwrite(profileEmail: expected, liveEmail: email) {
             statusText = "Logged in as \(email), not \(expected ?? name). Nothing saved."
             refreshIdentity()
             return
         }
-        saveCurrent(as: name)
+        let target = name ?? profiles.first { profileEmail($0) == email }
+            ?? AccountNaming.profileName(for: email, existing: profiles)
+        guard saveCurrent(as: target) else { return }
+        if name == nil { statusText = "Added \(email)" }
         usageModel.accountChanged()
         Task { [weak self] in await self?.usageModel.refresh(force: true) }
     }
 
     func loginToPreserve() -> String? {
-        guard let email = ClaudeConfig.currentEmail(),
-              !profiles.contains(where: { profileEmail($0) == email })
+        guard let current = storage.read(.current), let email = current.identity?.email,
+              !profiles.contains(where: { storage.read(.profile($0)).map(current.matchesAccount) == true })
         else { return nil }
         return AccountNaming.profileName(for: email, existing: profiles)
     }
 
-    func addAccount() {
-        guard addTask == nil else { return }
-        if let name = loginToPreserve() { saveCurrent(as: name) }
-        let before = ClaudeConfig.currentEmail()
-        if let error = TerminalLauncher.newLogin() {
+    func addAccount() async { await beginLogin(profile: nil) }
+
+    func relogin(_ name: String) async {
+        guard profiles.contains(name) else { return }
+        await beginLogin(profile: name)
+    }
+
+    private func beginLogin(profile name: String?) async {
+        guard !isAddingAccount, !isSwitchingAccount else { return }
+        isAddingAccount = true
+        loginGeneration += 1
+        let generation = loginGeneration
+        let preserved = await preserveCurrent()
+        guard generation == loginGeneration else { return }
+        guard preserved, !Task.isCancelled else {
+            isAddingAccount = false
+            statusText = "Could not save the current login"
+            return
+        }
+        let expected = name.flatMap(profileEmail)
+        let before = storage.currentEmail()
+        let credentials = storage.readCredentials()
+        if let error = launchLogin() {
+            isAddingAccount = false
             statusText = error
             return
         }
-        isAddingAccount = true
-        statusText = "Log in in the terminal — the profile saves itself."
+        statusText = name.map { "\($0) needs a login — log in as \(expected ?? $0)." }
+            ?? "Log in in the terminal — the profile saves itself."
         addTask = Task { [weak self] in
-            guard let result = await self?.waitForLogin(after: before) else { return }
-            self?.finishAdd(result)
+            guard let self else { return }
+            let result = await waitForLogin(after: before, credentials: credentials)
+            guard generation == loginGeneration else { return }
+            finishLogin(name, expected: expected, result: result)
         }
     }
 
     func cancelAdd() {
+        loginGeneration += 1
         addTask?.cancel()
         addTask = nil
         isAddingAccount = false
@@ -336,27 +359,16 @@ final class AccountStore: ObservableObject {
         while waited < loginTimeout {
             try? await Task.sleep(for: loginPoll)
             if Task.isCancelled { return .cancelled }
-            let (now, creds) = await Task.detached { (ClaudeConfig.currentEmail(), ClaudeKeychain.readRaw()) }.value
-            if let now, now != before || (credentials != nil && creds != credentials) { return .found(now) }
+            let (now, creds) = (storage.currentEmail(), storage.readCredentials())
+            if let now {
+                let renewedByApp = creds.map(logins.isManagedRenewal) ?? false
+                if now != before || (credentials != nil && creds != credentials && !renewedByApp) {
+                    return .found(now)
+                }
+            }
             waited += loginPoll
         }
         return .timedOut
-    }
-
-    private func finishAdd(_ result: LoginWait) {
-        guard result != .cancelled else { return }
-        addTask = nil
-        isAddingAccount = false
-        guard case .found(let email) = result else {
-            statusText = "No new login found. Nothing was saved."
-            return
-        }
-        let name = AccountNaming.profileName(for: email, existing: profiles)
-        saveCurrent(as: name)
-        guard profiles.contains(name) else { return }
-        statusText = "Added \(email)"
-        usageModel.accountChanged()
-        Task { [weak self] in await self?.usageModel.refresh(force: true) }
     }
 
     enum RenameOutcome: Equatable { case rename(String), reject(String), ignore }
@@ -368,36 +380,61 @@ final class AccountStore: ObservableObject {
         return .rename(clean)
     }
 
-    func rename(_ old: String, to raw: String) {
+    func rename(_ old: String, to raw: String) async {
+        guard !isSwitchingAccount, !isAddingAccount else { return }
         let clean: String
         switch Self.validateRename(from: old, to: raw, existing: profiles) {
         case .rename(let name): clean = name
         case .reject(let message): statusText = message; return
         case .ignore: return
         }
+        isSwitchingAccount = true
+        defer { isSwitchingAccount = false }
+        if case .failure(.storage) = await profileToken(old) {
+            statusText = "Rename failed: keychain write error"
+            return
+        }
+        renameSavedProfile(old, to: clean)
+    }
+
+    private func renameSavedProfile(_ old: String, to clean: String) {
         guard let index = profiles.firstIndex(of: old),
-              let payload = readProfile(old)
+              let payload = storage.readProfile(old)
         else {
             statusText = "Rename failed: profile not readable"
             return
         }
-        guard writeProfile(clean, payload: payload) else {
+        guard storage.writeProfile(clean, payload) else {
             statusText = "Rename failed: keychain write error"
             return
         }
-        Keychain.delete(service: profileService(old))
+        guard storage.deleteProfile(old) else {
+            _ = storage.deleteProfile(clean)
+            statusText = "Rename failed: cannot remove the old keychain entry"
+            return
+        }
         profiles[index] = clean
         if active == old { active = clean }
         usageByProfile[clean] = usageByProfile.removeValue(forKey: old)
+        if needsLogin.remove(old) != nil { needsLogin.insert(clean) }
         refreshIdentity()
         statusText = nil
         persist()
     }
 
     func delete(_ name: String) {
-        Keychain.delete(service: profileService(name))
+        guard !isSwitchingAccount, !isAddingAccount else { return }
+        let email = profileEmail(name)
+        guard storage.deleteProfile(name) else {
+            statusText = "Delete failed: cannot remove the saved login"
+            return
+        }
+        if email == storage.currentEmail(), let email {
+            defaults.set(email, forKey: PrefKey.claudeDeletedLogin)
+        }
         profiles.removeAll { $0 == name }
         usageByProfile[name] = nil
+        needsLogin.remove(name)
         if active == name { active = nil }
         refreshIdentity()
         persist()
