@@ -22,7 +22,28 @@ Requires macOS 14 or later.
 - **Clean worktrees** — finds git worktrees with no commits for 7+ days (the
   limit is a setting) and removes them along with their Claude transcripts and
   scratchpads, on request or automatically.
-- **Accounts** — save and switch between Claude logins, or add separate Codex logins.
+- **Accounts** — sign in once per account and switch between Claude and Codex logins.
+  Saved logins renew in the background, including accounts you are not using.
+
+## Saved logins
+
+cctray automatically saves your current Claude login and imports your current
+Codex login. Use **Add account…** in either account menu to sign in to another
+account. Profiles stay available across app restarts, and selecting one uses its
+latest credentials for new sessions.
+
+While cctray is running, it checks saved Claude logins every minute and renews
+tokens within five minutes of expiry. It keeps the selected CLI login and its
+saved profile in sync, including credentials renewed by Claude Code. Switching
+checks and renews the destination login before applying it. Codex checks run
+every five minutes through its installed CLI, which manages and saves its own
+token refreshes. Checks also run at launch and after your Mac wakes.
+
+Closing the menu does not stop login maintenance. Offline and rate-limit
+failures keep your saved login and retry later. If a provider revokes a login or
+rejects its refresh token, choose **Sign in again…** in the account menu. A new
+login updates the existing profile; you do not need to delete and recreate it.
+Refresh cannot restore a login revoked by the provider.
 
 ## Codex
 
@@ -113,15 +134,18 @@ removes the hook.
 cctray directly calls two Anthropic endpoints:
 
 - `api.anthropic.com/api/oauth/usage` reads your own usage numbers.
-- `console.anthropic.com/v1/oauth/token` renews an expired login, so the
-  switcher can show usage for an account you are not currently using. cctray
-  only calls it when a saved token has expired.
+- `platform.claude.com/v1/oauth/token` renews a saved or selected login shortly
+  before expiry, or after a usage request rejects its access token.
 
 It reuses the OAuth token Claude Code already stores —
 `~/.claude/.credentials.json` where Claude Code keeps one, otherwise the
 `Claude Code-credentials` login keychain item. A saved account profile keeps
 its own copy in a `cctray-profile-` keychain item, and a renewed token is
-written back to it. All keychain reads and writes go through
+written back to it and to the live CLI login when they represent the same
+account. Concurrent checks share one refresh request, and a completed refresh
+is saved even if the menu closes. If storage fails, cctray retains the renewed
+credentials in memory and retries saving them while the app remains running.
+All keychain reads and writes go through
 `/usr/bin/security`, so the app's location never matters to the keychain.
 Codex usage checks run `codex app-server`, which contacts OpenAI using the
 selected Codex login and handles token refresh itself. cctray does not copy

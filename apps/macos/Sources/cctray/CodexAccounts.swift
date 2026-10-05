@@ -11,12 +11,12 @@ struct CodexProfile: Codable, Identifiable, Equatable {
 
 @MainActor
 final class CodexAccounts: ObservableObject {
-    let model = CodexModel()
-    @Published var profiles: [CodexProfile] = savedProfiles
-    @Published var selected = UserDefaults.standard.string(forKey: PrefKey.codexSelectedProfile) ?? "" {
+    let model: CodexModel
+    @Published var profiles: [CodexProfile]
+    @Published var selected: String {
         didSet {
             guard selected != oldValue else { return }
-            UserDefaults.standard.set(selected, forKey: PrefKey.codexSelectedProfile)
+            defaults.set(selected, forKey: PrefKey.codexSelectedProfile)
             model.accountChanged()
             Task {
                 await model.refresh(force: true)
@@ -26,18 +26,41 @@ final class CodexAccounts: ObservableObject {
     }
     @Published var error: String?
     @Published var usageByProfile: [String: String] = [:]
+    @Published private(set) var isDeletingAccount = false
     private var lastUsageRefresh = Date.distantPast
     private var refreshingUsage = false
+    private let logins: CodexLoginManager
+    private let defaults: UserDefaults
+    private let launchLogin: (CodexProfile?) -> String?
+
+    init(logins: CodexLoginManager? = nil, defaults: UserDefaults = .standard,
+         launchLogin: @escaping (CodexProfile?) -> String? = TerminalLauncher.codexLogin) {
+        let logins = logins ?? .shared
+        self.logins = logins
+        self.defaults = defaults
+        self.launchLogin = launchLogin
+        profiles = Self.storedProfiles(in: defaults)
+        selected = defaults.string(forKey: PrefKey.codexSelectedProfile) ?? ""
+        model = CodexModel(logins: logins, currentProfile: { Self.current(in: defaults) })
+    }
 
     nonisolated static var savedProfiles: [CodexProfile] {
-        guard let data = UserDefaults.standard.data(forKey: PrefKey.codexProfiles),
+        storedProfiles(in: .standard)
+    }
+
+    private nonisolated static func storedProfiles(in defaults: UserDefaults) -> [CodexProfile] {
+        guard let data = defaults.data(forKey: PrefKey.codexProfiles),
               let profiles = try? JSONDecoder().decode([CodexProfile].self, from: data) else { return [] }
         return profiles.filter { UUID(uuidString: $0.id) != nil }
     }
 
     nonisolated static var current: CodexProfile? {
-        let selected = UserDefaults.standard.string(forKey: PrefKey.codexSelectedProfile)
-        return savedProfiles.first { $0.id == selected }
+        current(in: .standard)
+    }
+
+    private nonisolated static func current(in defaults: UserDefaults) -> CodexProfile? {
+        let selected = defaults.string(forKey: PrefKey.codexSelectedProfile)
+        return storedProfiles(in: defaults).first { $0.id == selected }
     }
 
     nonisolated static func command(_ arguments: String = "", profile: CodexProfile? = current) -> String {
@@ -47,13 +70,14 @@ final class CodexAccounts: ObservableObject {
 
     private func persist() {
         if let data = try? JSONEncoder().encode(profiles) {
-            UserDefaults.standard.set(data, forKey: PrefKey.codexProfiles)
+            defaults.set(data, forKey: PrefKey.codexProfiles)
         }
     }
 
     func captureCurrentLogin(email: String) {
-        guard Self.current == nil,
-              !UserDefaults.standard.bool(forKey: PrefKey.codexDefaultProfileDeleted) else { return }
+        guard !isDeletingAccount,
+              !profiles.contains(where: { $0.id == selected }),
+              !defaults.bool(forKey: PrefKey.codexDefaultProfileDeleted) else { return }
         if let existing = profiles.first(where: { $0.usesDefaultHome == true }) {
             selected = existing.id
         } else {
@@ -73,21 +97,23 @@ final class CodexAccounts: ObservableObject {
         return "\(text) · \(UsageParser.countdown(to: reset))"
     }
 
-    func refreshProfileUsage() async {
+    func refreshProfileUsage(minimumInterval: TimeInterval = 60) async {
         guard CodingAgent.codex.isEnabled else { return }
         if let limits = model.limits, model.error == nil, model.loadedProfile == selected {
             usageByProfile[selected] = Self.usageSummary(limits)
         }
-        guard !refreshingUsage, Date().timeIntervalSince(lastUsageRefresh) >= 60 else { return }
+        guard !refreshingUsage, Date().timeIntervalSince(lastUsageRefresh) >= minimumInterval else { return }
         refreshingUsage = true
         defer { refreshingUsage = false }
         lastUsageRefresh = Date()
-        for profile in profiles where profile.id != selected {
+        let scannedProfiles = profiles
+        for profile in scannedProfiles where profile.id != selected {
+            guard profiles.contains(where: { $0.id == profile.id }) else { continue }
             guard !Task.isCancelled, CodingAgent.codex.isEnabled else {
                 lastUsageRefresh = .distantPast
                 return
             }
-            let result = await Task.detached { Result { try CodexRPC.read(profile: profile) } }.value
+            let result = await logins.read(profile: profile)
             guard !Task.isCancelled else { lastUsageRefresh = .distantPast; return }
             guard profiles.contains(where: { $0.id == profile.id }) else { continue }
             switch result {
@@ -98,6 +124,7 @@ final class CodexAccounts: ObservableObject {
     }
 
     func add(name: String) {
+        guard !isDeletingAccount else { return }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         guard !profiles.contains(where: { $0.name == name }) else {
@@ -120,13 +147,14 @@ final class CodexAccounts: ObservableObject {
             profiles.append(profile)
             persist()
             selected = profile.id
-            error = TerminalLauncher.codexLogin()
+            error = launchLogin(profile)
         } catch {
             self.error = "Cannot create Codex account: \(error.localizedDescription)"
         }
     }
 
     func rename(_ id: String, to name: String) {
+        guard !isDeletingAccount else { return }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, let index = profiles.firstIndex(where: { $0.id == id }) else { return }
         guard !profiles.contains(where: { $0.id != id && $0.name == name }) else {
@@ -138,17 +166,27 @@ final class CodexAccounts: ObservableObject {
         error = nil
     }
 
+    func relogin(_ id: String) {
+        guard !isDeletingAccount, let profile = profiles.first(where: { $0.id == id }) else { return }
+        error = launchLogin(profile)
+        lastUsageRefresh = .distantPast
+        if id == selected { model.accountChanged() }
+    }
+
     func delete(_ id: String) {
-        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        guard !isDeletingAccount, let profile = profiles.first(where: { $0.id == id }) else { return }
+        isDeletingAccount = true
+        if selected == id { model.accountChanged() }
         Task {
-            let status = await Task.detached {
-                Shell.run("/bin/zsh", ["-ilc", Self.command("logout", profile: profile)]).status
-            }.value
-            guard status == 0 else { error = "Delete failed: cannot remove the Codex login"; return }
+            defer { isDeletingAccount = false }
+            if case .failure(let failure) = await logins.logout(profile: profile) {
+                error = failure.localizedDescription
+                return
+            }
             profiles.removeAll { $0.id == id }
             usageByProfile[id] = nil
             if profile.usesDefaultHome == true {
-                UserDefaults.standard.set(true, forKey: PrefKey.codexDefaultProfileDeleted)
+                defaults.set(true, forKey: PrefKey.codexDefaultProfileDeleted)
             }
             if selected == id { selected = profiles.first?.id ?? "" }
             persist()
