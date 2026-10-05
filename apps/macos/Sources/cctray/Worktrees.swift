@@ -85,6 +85,7 @@ enum Worktrees {
 @MainActor
 final class WorktreeModel: ObservableObject {
     @Published var stale: [Worktree] = []
+    @Published var cleanupPresentationID = UUID()
     private var scanning = false
     private var lastScan: Date?
     private var lastDays = 0

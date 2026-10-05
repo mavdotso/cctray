@@ -342,6 +342,7 @@ struct CleanupSection: View {
             GroupDivider()
             if !worktrees.stale.isEmpty {
                 CountRow(title: "Clean stale worktrees", count: worktrees.stale.count) {
+                    worktrees.cleanupPresentationID = UUID()
                     openWindow(id: "cleanWorktrees")
                     NSApp.activate(ignoringOtherApps: true)
                 }

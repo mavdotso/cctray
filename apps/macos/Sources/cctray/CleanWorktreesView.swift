@@ -18,7 +18,13 @@ struct CleanWorktreesView: View {
             }
         }
         .frame(width: 440)
-        .onAppear { selected = Set(worktrees.stale.filter(\.isRemovable).map(\.id)) }
+        .onChange(of: worktrees.cleanupPresentationID, initial: true) {
+            /* Window scenes retain state after closing; reset on each menu request. */
+            guard !working else { return }
+            result = nil
+            confirming = false
+            selected = Set(worktrees.stale.filter(\.isRemovable).map(\.id))
+        }
     }
 
     private var selection: [Worktree] {
