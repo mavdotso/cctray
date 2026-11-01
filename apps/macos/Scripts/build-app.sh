@@ -3,8 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP=build/cctray.app
-VERSION="${VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}"
-VERSION="${VERSION:-0.0.0-dev}"
+VERSION="${VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Info.plist)}"
 BUILD="${BUILD:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 
 FLAGS=(-c release)

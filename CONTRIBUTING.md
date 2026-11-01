@@ -45,7 +45,11 @@ apps/web                    the website, deployed by Vercel
 ```
 
 Files are grouped by feature. `Accounts.swift` and `CodexAccounts.swift` own
-account selection and usage. `SessionDiscovery.swift` resolves terminal sessions
+Profile selection. `ClaudeLogin.swift` owns renewal and credential preservation;
+`ClaudeUsageClient` in `UsageClient.swift` owns authenticated usage reads and
+retry deadlines. `CodexLoginManager` in `Codex.swift` owns refresh and logout
+sequencing through the installed CLI. `LoginMaintenance.swift` schedules checks
+at launch, periodically, and after wake. `SessionDiscovery.swift` resolves terminal sessions
 and transcripts; `Sessions.swift` manages polling. `PreWarm.swift` schedules both
 agents. Views are in `MenuView.swift`, `SettingsView.swift` and
 `CleanWorktreesView.swift`.
@@ -76,6 +80,21 @@ agents. Views are in `MenuView.swift`, `SettingsView.swift` and
 `main` is protected: no force pushes, no deletions, and CI has to pass before a
 merge.
 
+Credential lifecycle tests use synthetic logins and in-memory storage. Run them
+with `swift test --package-path apps/macos`; they do not read or refresh your
+real logins. CI runs these tests alongside the release build.
+
+`LiveLoginTests` are skipped by default. With explicit authorization to contact
+the providers and save rotated credentials, quit cctray and run
+`CCTRAY_LIVE_LOGIN_TESTS=1 swift test --package-path apps/macos --filter LiveLoginTests`.
+These tests use existing Claude Keychain logins and Codex profiles. They never
+print tokens. For a provider rate limit, wait until its retry deadline before
+rerunning the usage test.
+
 ## Releasing
+
+Update `CFBundleShortVersionString` in `apps/macos/Info.plist` for a new version.
+The build script uses that version by default; `VERSION` can override it for a
+local build. Tag the merged release commit with the matching `v` version.
 
 There is no binary distribution yet. Users build from source.

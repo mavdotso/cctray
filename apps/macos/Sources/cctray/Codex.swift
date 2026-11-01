@@ -35,19 +35,24 @@ struct CodexLimits: Decodable {
 
 enum CodexRPC {
     enum Failure: LocalizedError {
-        case unavailable, timedOut, rejected(String)
+        case unavailable, timedOut, signingOut, rejected(String)
         var errorDescription: String? {
             switch self {
             case .unavailable: "Codex unavailable. Install Codex CLI and sign in."
             case .timedOut: "Codex did not respond. Try again."
+            case .signingOut: "Removing the Codex login. Try again when it finishes."
             case .rejected(let message): message
             }
         }
     }
 
-    static func read(profile: CodexProfile? = CodexAccounts.current) throws -> (String, CodexLimits) {
+    static func read(profile: CodexProfile?) throws -> (String, CodexLimits) {
+        try read(command: CodexAccounts.command("app-server", profile: profile))
+    }
+
+    static func read(command: String) throws -> (String, CodexLimits) {
         let input = Pipe(), output = Pipe()
-        let process = try Shell.start("/bin/zsh", ["-ilc", "exec " + CodexAccounts.command("app-server", profile: profile)],
+        let process = try Shell.start("/bin/zsh", ["-ilc", "exec " + command],
                                       input: input, output: output)
         defer {
             try? input.fileHandleForWriting.close()
@@ -92,7 +97,7 @@ enum CodexRPC {
             "clientInfo": ["name": "cctray", "version": "1.0"]
         ])
         try send(["method": "initialized"])
-        let accountData = try request("account/read", id: 1)
+        let accountData = try request("account/read", id: 1, params: ["refreshToken": true])
         let object = try JSONSerialization.jsonObject(with: accountData) as? [String: Any]
         guard let account = object?["account"] as? [String: Any] else {
             throw Failure.rejected("Sign in with codex login")
@@ -107,6 +112,60 @@ enum CodexRPC {
 }
 
 @MainActor
+final class CodexLoginManager {
+    typealias Reading = Result<(String, CodexLimits), Error>
+    static let shared = CodexLoginManager()
+
+    private let readLogin: (CodexProfile?) async -> Reading
+    private let removeLogin: (CodexProfile) async -> Result<Void, Error>
+    private var reads: [String: Task<Reading, Never>] = [:]
+    private var removals: [String: Task<Result<Void, Error>, Never>] = [:]
+
+    init(read: @escaping (CodexProfile?) async -> Reading = { profile in
+        await Task.detached { Result { try CodexRPC.read(profile: profile) } }.value
+    }, logout: @escaping (CodexProfile) async -> Result<Void, Error> = { profile in
+        await Task.detached {
+            Result {
+                guard Shell.run("/bin/zsh", ["-ilc", CodexAccounts.command("logout", profile: profile)]).status == 0 else {
+                    throw CodexRPC.Failure.rejected("Delete failed: cannot remove the Codex login")
+                }
+            }
+        }.value
+    }) {
+        readLogin = read
+        removeLogin = logout
+    }
+
+    /* Finish credential rotation even when a menu task is cancelled. Logout
+       waits for that work before removing the login. */
+    func read(profile: CodexProfile?) async -> Reading {
+        let home = profile?.home ?? CodexHook.home
+        guard removals[home] == nil else { return .failure(CodexRPC.Failure.signingOut) }
+        if let task = reads[home] { return await task.value }
+        let task = Task {
+            let result = await readLogin(profile)
+            reads[home] = nil
+            return result
+        }
+        reads[home] = task
+        return await task.value
+    }
+
+    func logout(profile: CodexProfile) async -> Result<Void, Error> {
+        let home = profile.home
+        if let task = removals[home] { return await task.value }
+        let task = Task {
+            _ = await reads[home]?.value
+            let result = await removeLogin(profile)
+            removals[home] = nil
+            return result
+        }
+        removals[home] = task
+        return await task.value
+    }
+}
+
+@MainActor
 final class CodexModel: ObservableObject {
     @Published private(set) var limits: CodexLimits?
     @Published private(set) var email: String?
@@ -116,6 +175,14 @@ final class CodexModel: ObservableObject {
     private var refreshing = false
     private var lastRefresh = Date.distantPast
     private var timer: Timer?
+    private let logins: CodexLoginManager
+    private let currentProfile: () -> CodexProfile?
+
+    init(logins: CodexLoginManager? = nil,
+         currentProfile: @escaping () -> CodexProfile? = { CodexAccounts.current }) {
+        self.logins = logins ?? .shared
+        self.currentProfile = currentProfile
+    }
 
     func start() {
         timer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
@@ -129,11 +196,11 @@ final class CodexModel: ObservableObject {
         guard !refreshing, force || Date().timeIntervalSince(lastRefresh) >= 60 else { return }
         refreshing = true
         lastRefresh = Date()
-        let profile = CodexAccounts.current
+        let profile = currentProfile()
         let requestGeneration = generation
-        let result = await Task.detached { Result { try CodexRPC.read(profile: profile) } }.value
+        let result = await logins.read(profile: profile)
         refreshing = false
-        guard requestGeneration == generation, profile == CodexAccounts.current else {
+        guard requestGeneration == generation, profile == currentProfile() else {
             limits = nil
             email = nil
             await refresh(force: true)

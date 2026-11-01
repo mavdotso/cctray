@@ -24,8 +24,10 @@ enum Keychain {
                                                "-s", service, "-X", hex]).status == 0
     }
 
-    static func delete(service: String) {
-        _ = Shell.run("/usr/bin/security", ["delete-generic-password", "-s", service])
+    @discardableResult
+    static func delete(service: String) -> Bool {
+        let result = Shell.run("/usr/bin/security", ["delete-generic-password", "-s", service])
+        return result.status == 0 || result.status == 44
     }
 
     static func hexDecoded(_ s: String) -> Data? {
@@ -43,50 +45,60 @@ enum Keychain {
 }
 
 enum ClaudeOAuth {
-    enum RefreshResult { case ok([String: Any]), failed(String) }
-
     static let clientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-    static let tokenURL = URL(string: "https://console.anthropic.com/v1/oauth/token")!
-
-    static func isExpired(_ oauth: [String: Any], now: Date = Date()) -> Bool {
-        guard let ms = oauth["expiresAt"] as? Double else { return false }
-        return Date(timeIntervalSince1970: ms / 1000) <= now
-    }
+    static let tokenURL = URL(string: "https://platform.claude.com/v1/oauth/token")!
 
     /* invalid_grant is unrecoverable: the saved refresh token is spent. */
-    static func reason(code: Int, body: Data) -> String {
+    static func reason(code: Int, body: Data, retryAfter: String? = nil) -> ClaudeLoginError {
         let error = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["error"]
         let type = error as? String ?? (error as? [String: Any])?["type"] as? String
-        if type == "invalid_grant" { return "sign in again" }
-        return code == 429 ? "rate limited" : "not available"
+        if type == "invalid_grant" { return .signIn }
+        return code == 429 ? .rateLimited(RetryAfter.date(retryAfter)) : .unavailable
     }
 
-    /* The old refresh token stops working as soon as this succeeds. */
-    static func refresh(_ oauth: [String: Any]) async -> RefreshResult {
-        guard let refreshToken = oauth["refreshToken"] as? String else { return .failed("sign in again") }
+    static func refresh(_ login: ClaudeLogin) async -> Result<ClaudeLogin, ClaudeLoginError> {
+        let oauth = login.oauth
+        guard let refreshToken = oauth["refreshToken"] as? String, !refreshToken.isEmpty else {
+            return .failure(.signIn)
+        }
         var req = URLRequest(url: tokenURL)
+        req.timeoutInterval = 30
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: [
+        var payload = [
             "grant_type": "refresh_token",
             "refresh_token": refreshToken,
             "client_id": clientID,
-        ])
+        ]
+        if let scopes = oauth["scopes"] as? [String], !scopes.isEmpty {
+            payload["scope"] = scopes.joined(separator: " ")
+        }
+        req.httpBody = try? JSONSerialization.data(withJSONObject: payload)
         guard let (data, resp) = try? await URLSession.shared.data(for: req) else {
-            return .failed("offline")
+            return .failure(.offline)
         }
         let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
-        guard code == 200 else { return .failed(reason(code: code, body: data)) }
+        guard code == 200 else {
+            return .failure(reason(code: code, body: data,
+                                   retryAfter: (resp as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After")))
+        }
         guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let access = body["access_token"] as? String
-        else { return .failed("not available") }
+              let access = body["access_token"] as? String, !access.isEmpty
+        else { return .failure(.unavailable) }
         var updated = oauth
         updated["accessToken"] = access
-        if let rotated = body["refresh_token"] as? String { updated["refreshToken"] = rotated }
+        if let rotated = body["refresh_token"] as? String, !rotated.isEmpty { updated["refreshToken"] = rotated }
         if let seconds = body["expires_in"] as? Double {
             updated["expiresAt"] = (Date().timeIntervalSince1970 + seconds) * 1000
+        } else {
+            updated.removeValue(forKey: "expiresAt")
         }
-        return .ok(updated)
+        if let scope = body["scope"] as? String {
+            updated["scopes"] = scope.split(whereSeparator: \.isWhitespace).map(String.init)
+        }
+        var renewed = login
+        renewed.file["claudeAiOauth"] = updated
+        return .success(renewed)
     }
 }
 
@@ -127,11 +139,14 @@ enum ClaudeKeychain {
         return true
     }
 
-    static func accessToken() -> String? {
-        guard let data = readRaw(),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let oauth = obj["claudeAiOauth"] as? [String: Any]
-        else { return nil }
-        return oauth["accessToken"] as? String
+    static func clearLogin() -> Bool {
+        guard let data = FileManager.default.contents(atPath: filePath) else { return Keychain.delete(service: service) }
+        guard var file = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        file.removeValue(forKey: "claudeAiOauth")
+        guard let updated = try? JSONSerialization.data(withJSONObject: file),
+              (try? updated.write(to: URL(fileURLWithPath: filePath), options: .atomic)) != nil else { return false }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: filePath)
+        return true
     }
+
 }

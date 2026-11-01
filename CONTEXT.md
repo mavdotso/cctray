@@ -9,6 +9,8 @@ _Avoid_: Provider when referring to the tool itself.
 
 **Account**: The signed-in identity whose usage limits apply to an agent.
 
+**Login**: The credentials that authorize access to an account. A saved login can be renewed while authorization remains valid; saving it does not make that authorization permanent.
+
 **Profile**: A saved, named account selection for an agent. Selecting a profile determines the account used for new sessions; running sessions keep their existing account.
 _Avoid_: Account when referring specifically to the saved selection.
 

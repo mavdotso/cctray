@@ -62,7 +62,9 @@ enum TerminalLauncher {
     }
 
     @discardableResult
-    static func codexLogin() -> String? { open(CodexAccounts.command("login"), in: .selected) }
+    static func codexLogin(profile: CodexProfile? = CodexAccounts.current) -> String? {
+        open(CodexAccounts.command("login", profile: profile), in: .selected)
+    }
 
     static func appleScriptLiteral(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\")
