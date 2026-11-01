@@ -37,6 +37,15 @@ struct Usage: Decodable {
         case limits
     }
 
+    /* The API sends null for a window that has not started yet. */
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let idle = UsageWindow(utilization: 0, resetsAt: nil)
+        fiveHour = try c.decodeIfPresent(UsageWindow.self, forKey: .fiveHour) ?? idle
+        sevenDay = try c.decodeIfPresent(UsageWindow.self, forKey: .sevenDay) ?? idle
+        limits = try c.decodeIfPresent([LimitEntry].self, forKey: .limits)
+    }
+
     struct TopLimit { let label: String, percent: Double, resetsAt: Date? }
 
     static func windowLabel(_ group: String) -> String {

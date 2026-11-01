@@ -36,6 +36,15 @@ struct ClaudeUsageTests {
         return try #require(ClaudeLogin(credentials: credentials, account: ["emailAddress": email]))
     }
 
+    @Test func nullWindowParsesAsIdle() throws {
+        let json = #"{"five_hour":null,"seven_day":{"utilization":17.0,"resets_at":"2026-11-07T08:59:59.823895+00:00"},"limits":[{"kind":"weekly_all","group":"weekly","percent":17,"resets_at":"2026-11-07T08:59:59.823895+00:00","scope":null}]}"#
+        let usage = try UsageParser.parse(Data(json.utf8))
+        #expect(usage.fiveHour.utilization == 0)
+        #expect(usage.fiveHour.resetsAt == nil)
+        #expect(usage.sevenDay.utilization == 17)
+        #expect(usage.topLimit.percent == 17)
+    }
+
     @Test func currentAndSavedReadsShareUsageRequestDespiteCallerCancellation() async throws {
         let login = try login("one")
         let manager = ClaudeLoginManager(read: { _ in login }, write: { _, _ in true },
