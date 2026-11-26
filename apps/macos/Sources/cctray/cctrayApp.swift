@@ -11,6 +11,7 @@ final class AppState: ObservableObject {
     let sessions = SessionModel()
     let worktrees = WorktreeModel()
     let accounts = AccountStore()
+    private lazy var loginMaintenance = LoginMaintenance(claude: accounts, codex: codexAccounts)
     private var menuTask: Task<Void, Never>?
     @Published var launchError: String?
 
@@ -20,6 +21,7 @@ final class AppState: ObservableObject {
         }
         usageModel.startPolling()
         codex.start()
+        loginMaintenance.start()
         preWarm.start(usageModel: usageModel, codex: codex)
         NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
             guard let agent = AgentHotkey.agent(keyCode: event.keyCode,
@@ -57,6 +59,7 @@ final class AppState: ObservableObject {
 
     func agentSettingsChanged() {
         attention.apply()
+        loginMaintenance.tick(force: true)
         Task {
             await sessions.refresh()
             await usageModel.refresh(force: true)

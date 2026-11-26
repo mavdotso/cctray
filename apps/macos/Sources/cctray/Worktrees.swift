@@ -91,7 +91,7 @@ final class WorktreeModel: ObservableObject {
     private var lastDays = 0
 
 
-    private static let rescanAfter: TimeInterval = 600
+    private static let rescanAfter: TimeInterval = 86_400
 
     func refresh(force: Bool = false) {
         guard !scanning else { return }

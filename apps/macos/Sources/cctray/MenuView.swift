@@ -285,14 +285,14 @@ struct AccountRow: View {
                 Menu(accounts.active ?? "Choose…") {
                     ForEach(accounts.profiles, id: \.self) { name in
                         Button(AccountStore.menuLabel(name, summary: accounts.usageByProfile[name])) {
-                            accounts.activate(name)
+                            Task { await accounts.activate(name) }
                         }
                     }
                     Divider()
                     if accounts.isAddingAccount {
                         Button("Cancel login") { accounts.cancelAdd() }
                     } else {
-                        Button("Add account…") { accounts.addAccount() }
+                        Button("Add account…") { Task { await accounts.addAccount() } }
                     }
                     if let unsaved = accounts.unsavedLogin {
                         Button("Save current login as…") { newName = unsaved; editing = .save }
@@ -301,7 +301,12 @@ struct AccountRow: View {
                         Button("Rename \(active)…") { newName = active; editing = .rename(active) }
                         Button("Delete \(active)", role: .destructive) { accounts.delete(active) }
                     }
+                    ForEach(accounts.profiles.filter { accounts.needsLogin.contains($0) }, id: \.self) { name in
+                        Button("Sign in again to \(name)…") { Task { await accounts.relogin(name) } }
+                            .disabled(accounts.isAddingAccount)
+                    }
                 }
+                .disabled(accounts.isSwitchingAccount)
                 .controlSize(.small)
                 .fixedSize()
             }
@@ -322,9 +327,10 @@ struct AccountRow: View {
     }
 
     private func commit() {
+        let name = newName
         switch editing {
-        case .save: accounts.saveCurrent(as: newName)
-        case .rename(let old): accounts.rename(old, to: newName)
+        case .save: accounts.saveCurrent(as: name)
+        case .rename(let old): Task { await accounts.rename(old, to: name) }
         case nil: break
         }
         newName = ""
@@ -489,9 +495,11 @@ struct CodexAccountRow: View {
                     Button("Add account…") { renaming = false; name = ""; editing = true }
                     if let profile {
                         Button("Rename \(profile.name)…") { renaming = true; name = profile.name; editing = true }
+                        Button("Sign in again…") { accounts.relogin(profile.id) }
                         Button("Delete \(profile.name)", role: .destructive) { accounts.delete(profile.id) }
                     }
                 }
+                .disabled(accounts.isDeletingAccount)
                 .controlSize(.small)
                 .fixedSize()
             }
@@ -506,6 +514,7 @@ struct CodexAccountRow: View {
                 }
                 .padding(.horizontal, 6)
                 .padding(.bottom, 4)
+                .disabled(accounts.isDeletingAccount)
             }
         }
     }

@@ -1,5 +1,17 @@
 import Foundation
 
+enum RetryAfter {
+    static func date(_ value: String?, now: Date = Date()) -> Date? {
+        guard let value else { return nil }
+        if let seconds = Double(value), seconds.isFinite, seconds >= 0 { return now.addingTimeInterval(seconds) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        return formatter.date(from: value)
+    }
+}
+
 enum Shell {
     static func start(_ path: String, _ args: [String], input: Pipe, output: Pipe) throws -> Process {
         let process = Process()
@@ -152,6 +164,7 @@ enum PrefKey {
     static let autoAwake = "sessions.autoAwake"
     static let accountProfiles = "accounts.profiles"
     static let accountActive = "accounts.active"
+    static let claudeDeletedLogin = "accounts.deletedLogin"
     static let usageCache = "usage.cache"
     static let usageCacheAccount = "usage.cacheAccount"
     static let codexProfiles = "codex.profiles"
