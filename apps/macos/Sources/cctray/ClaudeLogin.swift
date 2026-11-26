@@ -74,14 +74,19 @@ struct ClaudeLoginStorage {
         (try? $0.write(to: URL(fileURLWithPath: ClaudeConfig.path), options: .atomic)) != nil
     }
     var readProfile: (String) -> [String: Any]? = { name in
-        guard let data = Keychain.read(service: "cctray-profile-\(name)") else { return nil }
+        guard let data = ProfileCache.live.read(name, load: { Keychain.read(service: "cctray-profile-\($0)") })
+        else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
     var writeProfile: (String, [String: Any]) -> Bool = { name, payload in
         guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return false }
+        defer { ProfileCache.live.invalidate(name) }
         return Keychain.write(service: "cctray-profile-\(name)", data: data)
     }
-    var deleteProfile: (String) -> Bool = { Keychain.delete(service: "cctray-profile-\($0)") }
+    var deleteProfile: (String) -> Bool = { name in
+        defer { ProfileCache.live.invalidate(name) }
+        return Keychain.delete(service: "cctray-profile-\(name)")
+    }
 
     func currentEmail() -> String? {
         readConfiguration().flatMap(ClaudeConfig.readOauthAccount)?["emailAddress"] as? String

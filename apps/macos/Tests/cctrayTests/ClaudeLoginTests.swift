@@ -451,3 +451,16 @@ struct ClaudeLoginTests {
         #expect(RetryAfter.date("-1") == nil)
     }
 }
+
+@Test func profileCacheLoadsOnceUntilInvalidated() {
+    let cache = ProfileCache()
+    var loads = 0
+    let load: (String) -> Data? = { _ in loads += 1; return loads == 1 ? nil : Data("v\(loads)".utf8) }
+    #expect(cache.read("a", load: load) == nil)
+    #expect(cache.read("a", load: load) == nil)
+    #expect(loads == 1)
+    cache.invalidate("a")
+    #expect(cache.read("a", load: load) == Data("v2".utf8))
+    #expect(cache.read("a", load: load) == Data("v2".utf8))
+    #expect(loads == 2)
+}

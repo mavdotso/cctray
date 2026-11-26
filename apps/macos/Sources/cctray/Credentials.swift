@@ -2,12 +2,9 @@ import Foundation
 
 enum Keychain {
     static func read(service: String) -> Data? {
-        let found = Shell.run("/usr/bin/security", ["find-generic-password", "-s", service])
-        guard found.status == 0 else { return nil }
-        let out = Shell.capture("/usr/bin/security",
-                                ["find-generic-password", "-s", service, "-w"])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !out.isEmpty else { return nil }
+        let found = Shell.run("/usr/bin/security", ["find-generic-password", "-s", service, "-w"])
+        let out = found.out.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard found.status == 0, !out.isEmpty else { return nil }
         return hexDecoded(out) ?? Data(out.utf8)
     }
 
@@ -41,6 +38,24 @@ enum Keychain {
             i = next
         }
         return out
+    }
+}
+
+/* Only cctray writes its profile items, so a read stays valid until cctray writes or deletes it. */
+final class ProfileCache: @unchecked Sendable {
+    static let live = ProfileCache()
+    private var items: [String: Data?] = [:]
+    private let lock = NSLock()
+
+    func read(_ name: String, load: (String) -> Data?) -> Data? {
+        if let hit = lock.withLock({ items[name] }) { return hit }
+        let data = load(name)
+        lock.withLock { items[name] = data }
+        return data
+    }
+
+    func invalidate(_ name: String) {
+        lock.withLock { items[name] = nil }
     }
 }
 
