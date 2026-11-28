@@ -44,7 +44,7 @@ final class PreWarmController: ObservableObject {
         }
     }
     @Published private var errors: [CodingAgent: String] = [:]
-    var lastError: String? { errors[.claude] ?? errors[.codex] }
+    var lastError: String? { errors[.claude] ?? errors[.codex] ?? errors[.gemini] }
     private let defaults = UserDefaults.standard
     private var fired: [String: Date] = [:]
     private var running = Set<CodingAgent>()
@@ -52,6 +52,7 @@ final class PreWarmController: ObservableObject {
     private var wakeObserver: NSObjectProtocol?
     private weak var usageModel: UsageModel?
     private weak var codex: CodexModel?
+    private weak var gemini: GeminiUsageModel?
 
     private var hours: ActiveHours {
         ActiveHours(
@@ -59,9 +60,10 @@ final class PreWarmController: ObservableObject {
             endMin: defaults.object(forKey: PrefKey.prewarmEndMin) as? Int ?? ActiveHours.default.endMin)
     }
 
-    func start(usageModel: UsageModel, codex: CodexModel) {
+    func start(usageModel: UsageModel, codex: CodexModel, gemini: GeminiUsageModel) {
         self.usageModel = usageModel
         self.codex = codex
+        self.gemini = gemini
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { await self?.tick() }
@@ -75,6 +77,7 @@ final class PreWarmController: ObservableObject {
                 await self.tick()
                 await usageModel.refresh()
                 await codex.refresh()
+                await gemini.refresh()
             }
         }
     }
@@ -90,6 +93,10 @@ final class PreWarmController: ObservableObject {
         if let codex, codex.error == nil, codex.loadedProfile == account {
             targets.append(Target(agent: .codex, account: account,
                                   reset: codex.limits?.sessionWindow?.reset, profile: profile))
+        }
+        if let gemini, !gemini.authFailed, !gemini.isStale,
+           let account = gemini.loadedAccount, account == GeminiConfig.currentEmail() {
+            targets.append(Target(agent: .gemini, account: account, reset: gemini.usage?.preWarmReset))
         }
         await evaluate(targets)
     }
@@ -110,11 +117,14 @@ final class PreWarmController: ObservableObject {
             }
             if status == 0 {
                 errors[target.agent] = nil
-                if target.agent == .claude { await usageModel?.refresh(force: true) }
-                else { await codex?.refresh(force: true) }
+                switch target.agent {
+                case .claude: await usageModel?.refresh(force: true)
+                case .codex: await codex?.refresh(force: true)
+                case .gemini: await gemini?.refresh(force: true)
+                }
             } else {
                 errors[target.agent] = "\(target.agent.name) pre-warm failed (\(status))"
-                if target.agent == .claude { fired[target.key] = nil }
+                if target.agent == .claude || target.agent == .gemini { fired[target.key] = nil }
             }
         }
     }
@@ -122,16 +132,20 @@ final class PreWarmController: ObservableObject {
     private nonisolated static func runCommand(_ target: Target) async -> Int32? {
         await Task.detached { () -> Int32? in
             guard target.agent.isEnabled else { return nil }
-            if target.agent == .claude {
+            let command: String
+            switch target.agent {
+            case .claude:
                 guard ClaudeConfig.currentEmail() == target.account else { return nil }
-            } else {
+                command = "claude -p \"hi\" --model haiku"
+            case .codex:
                 guard (CodexAccounts.current?.id ?? "default") == target.account else { return nil }
-            }
-            let command = target.agent == .claude
-                ? "claude -p \"hi\" --model haiku"
-                : CodexAccounts.command(
+                command = CodexAccounts.command(
                     "exec --ephemeral --skip-git-repo-check --sandbox read-only -C /tmp -c 'notify=[]' 'Reply only with hi. Do not use tools.'",
                     profile: target.profile)
+            case .gemini:
+                guard GeminiConfig.currentEmail() == target.account else { return nil }
+                command = GeminiCLI.preWarmCommand
+            }
             return Shell.run("/bin/zsh", ["-ilc", command]).status
         }.value
     }

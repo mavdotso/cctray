@@ -69,4 +69,12 @@ struct LiveLoginTests {
         if profiles.isEmpty { _ = try await CodexLoginManager.shared.read(profile: nil).get() }
         else { #expect(!homes.isEmpty) }
     }
+
+    @Test func geminiCurrentLoginCanReadLiveUsage() async throws {
+        let login = try #require(GeminiLoginStorage.live.read(.current), "No current Gemini login available")
+        let manager = GeminiLoginManager()
+        let token = try await manager.token(for: .current).get()
+        _ = try await GeminiCodeAssist.fetchUsage(token: token)
+        #expect(login.email != nil)
+    }
 }

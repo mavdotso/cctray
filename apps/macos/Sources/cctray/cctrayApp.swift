@@ -5,13 +5,15 @@ final class AppState: ObservableObject {
     let awake = AwakeController()
     var usageModel: UsageModel { accounts.usageModel }
     var codex: CodexModel { codexAccounts.model }
+    var gemini: GeminiUsageModel { geminiAccounts.usageModel }
     let codexAccounts = CodexAccounts()
+    let geminiAccounts = GeminiAccounts()
     let preWarm = PreWarmController()
     let attention = AttentionCenter()
     let sessions = SessionModel()
     let worktrees = WorktreeModel()
     let accounts = AccountStore()
-    private lazy var loginMaintenance = LoginMaintenance(claude: accounts, codex: codexAccounts)
+    private lazy var loginMaintenance = LoginMaintenance(claude: accounts, codex: codexAccounts, gemini: geminiAccounts)
     private var menuTask: Task<Void, Never>?
     @Published var launchError: String?
 
@@ -21,12 +23,13 @@ final class AppState: ObservableObject {
         }
         usageModel.startPolling()
         codex.start()
+        gemini.startPolling()
         loginMaintenance.start()
-        preWarm.start(usageModel: usageModel, codex: codex)
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { event in
+        preWarm.start(usageModel: usageModel, codex: codex, gemini: gemini)
+        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let agent = AgentHotkey.agent(keyCode: event.keyCode,
                 modifiers: event.modifierFlags.intersection(AgentHotkey.relevantFlags).rawValue) else { return }
-            Task { @MainActor [weak self] in
+            Task { @MainActor in
                 self?.launchError = TerminalLauncher.newSession(agent: agent)
             }
         }
@@ -41,6 +44,7 @@ final class AppState: ObservableObject {
         attention.clearLog()
         worktrees.refresh()
         if CodingAgent.claude.isEnabled { accounts.refreshIdentity() }
+        if CodingAgent.gemini.isEnabled { geminiAccounts.refreshIdentity() }
         menuTask?.cancel()
         menuTask = Task { [weak self] in
             guard let self else { return }
@@ -54,6 +58,10 @@ final class AppState: ObservableObject {
             await usageModel.refresh()
             guard !Task.isCancelled else { return }
             if CodingAgent.claude.isEnabled { await accounts.refreshProfileUsage() }
+            guard !Task.isCancelled else { return }
+            await gemini.refresh()
+            guard !Task.isCancelled else { return }
+            if CodingAgent.gemini.isEnabled { await geminiAccounts.refreshProfileUsage() }
         }
     }
 
@@ -64,6 +72,7 @@ final class AppState: ObservableObject {
             await sessions.refresh()
             await usageModel.refresh(force: true)
             await codex.refresh(force: true)
+            await gemini.refresh(force: true)
         }
     }
 

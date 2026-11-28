@@ -4,7 +4,7 @@ cctray tracks coding agents' terminal sessions and account usage.
 
 ## Language
 
-**Agent**: A supported coding tool, currently Claude or Codex.
+**Agent**: A supported coding tool, currently Claude, Codex, or Gemini.
 _Avoid_: Provider when referring to the tool itself.
 
 **Account**: The signed-in identity whose usage limits apply to an agent.

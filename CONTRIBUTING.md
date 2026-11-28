@@ -44,15 +44,16 @@ apps/web                    the website, deployed by Vercel
 .github/workflows/ci.yml    builds both apps
 ```
 
-Files are grouped by feature. `Accounts.swift` and `CodexAccounts.swift` own
-Profile selection. `ClaudeLogin.swift` owns renewal and credential preservation;
-`ClaudeUsageClient` in `UsageClient.swift` owns authenticated usage reads and
-retry deadlines. `CodexLoginManager` in `Codex.swift` owns refresh and logout
-sequencing through the installed CLI. `LoginMaintenance.swift` schedules checks
-at launch, periodically, and after wake. `SessionDiscovery.swift` resolves terminal sessions
-and transcripts; `Sessions.swift` manages polling. `PreWarm.swift` schedules both
-agents. Views are in `MenuView.swift`, `SettingsView.swift` and
-`CleanWorktreesView.swift`.
+Files are grouped by feature. `Accounts.swift`, `CodexAccounts.swift`, and
+`GeminiAccounts.swift` own Profile selection. `ClaudeLogin.swift` and
+`GeminiLogin.swift` own renewal and credential preservation; `ClaudeUsageClient`
+in `UsageClient.swift` and `GeminiUsageClient` in `GeminiUsage.swift` own
+authenticated usage reads and retry deadlines. `CodexLoginManager` in
+`Codex.swift` owns refresh and logout sequencing through the installed CLI.
+`LoginMaintenance.swift` schedules checks at launch, periodically, and after
+wake. `SessionDiscovery.swift` resolves terminal sessions and transcripts;
+`Sessions.swift` manages polling. `PreWarm.swift` schedules all enabled agents.
+Views are in `MenuView.swift`, `SettingsView.swift` and `CleanWorktreesView.swift`.
 
 ## Conventions
 

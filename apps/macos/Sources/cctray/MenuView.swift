@@ -6,22 +6,39 @@ struct MenuView: View {
     @AppStorage(PrefKey.showAccounts) private var showAccounts = true
     @AppStorage(CodingAgent.claude.enabledKey) private var claudeEnabled = true
     @AppStorage(CodingAgent.codex.enabledKey) private var codexEnabled = true
+    @AppStorage(CodingAgent.gemini.enabledKey) private var geminiEnabled = true
+
+    private var multipleAgents: Bool {
+        [claudeEnabled, codexEnabled, geminiEnabled].filter(\.self).count > 1
+    }
+
+    private var anyAgentEnabled: Bool {
+        claudeEnabled || codexEnabled || geminiEnabled
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             if claudeEnabled {
-                UsagePanel(model: state.usageModel, title: codexEnabled ? "Claude" : nil)
+                UsagePanel(model: state.usageModel, title: multipleAgents ? "Claude" : nil)
             }
-            if codexEnabled { CodexPanel(model: state.codex) }
+            if codexEnabled { CodexPanel(model: state.codex, showTitle: multipleAgents) }
+            if geminiEnabled {
+                GeminiPanel(model: state.gemini, title: multipleAgents ? "Gemini" : nil)
+            }
             AwakeRow(awake: state.awake)
             PreWarmRow(preWarm: state.preWarm)
             AttentionRow(attention: state.attention)
-            if showAccounts {
+            if showAccounts && anyAgentEnabled {
                 GroupDivider()
                 if claudeEnabled {
-                    AccountRow(accounts: state.accounts, title: codexEnabled ? "Claude account" : "Account")
+                    AccountRow(accounts: state.accounts, title: multipleAgents ? "Claude account" : "Account")
                 }
-                if codexEnabled { CodexAccountRow(accounts: state.codexAccounts) }
+                if codexEnabled {
+                    CodexAccountRow(accounts: state.codexAccounts, title: multipleAgents ? "Codex account" : "Account")
+                }
+                if geminiEnabled {
+                    GeminiAccountRow(accounts: state.geminiAccounts, title: multipleAgents ? "Gemini account" : "Account")
+                }
             }
             SessionsSection(sessions: state.sessions)
             CleanupSection(sessions: state.sessions, worktrees: state.worktrees)
@@ -448,10 +465,11 @@ struct SessionRow: View {
 
 struct CodexPanel: View {
     @ObservedObject var model: CodexModel
+    var showTitle = true
 
     var body: some View {
         if let limits = model.limits, case let columns = columns(limits), !columns.isEmpty {
-            UsageStats(title: limits.sessionWindow == nil ? nil : "Codex",
+            UsageStats(title: showTitle && limits.sessionWindow != nil ? "Codex" : nil,
                        columns: columns, isStale: model.error != nil)
         }
     }
@@ -461,7 +479,7 @@ struct CodexPanel: View {
             UsageColumn(label: "Session", pct: $0.usedPercent, detail: UsageColumn.resetText($0.reset))
         }
         let week = limits.weeklyWindow.map {
-            UsageColumn(label: session == nil ? "Codex · Week" : "Week", pct: $0.usedPercent,
+            UsageColumn(label: session == nil && showTitle ? "Codex · Week" : "Week", pct: $0.usedPercent,
                         detail: UsageColumn.pctDetail(UsageWindow(utilization: $0.usedPercent, resetsAt: $0.reset)))
         }
         return [session, week].compactMap { $0 }
@@ -471,20 +489,22 @@ struct CodexPanel: View {
 struct CodexAccountRow: View {
     @ObservedObject var accounts: CodexAccounts
     @ObservedObject private var model: CodexModel
+    var title = "Codex account"
     @State private var editing = false
     @State private var renaming = false
     @State private var name = ""
 
-    init(accounts: CodexAccounts) {
+    init(accounts: CodexAccounts, title: String = "Codex account") {
         self.accounts = accounts
         self.model = accounts.model
+        self.title = title
     }
 
     private var profile: CodexProfile? { accounts.profiles.first { $0.id == accounts.selected } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Row(title: "Codex account", subtitle: accounts.error ?? model.error) {
+            Row(title: title, subtitle: accounts.error ?? model.error) {
                 Menu(profile?.name ?? "Choose…") {
                     ForEach(accounts.profiles) { profile in
                         Button(AccountStore.menuLabel(profile.name, summary: accounts.usageByProfile[profile.id])) {
@@ -523,5 +543,99 @@ struct CodexAccountRow: View {
         if renaming { accounts.rename(accounts.selected, to: name) }
         else { accounts.add(name: name) }
         if accounts.error == nil { editing = false }
+    }
+}
+
+struct GeminiPanel: View {
+    @ObservedObject var model: GeminiUsageModel
+    var title: String?
+
+    var body: some View {
+        if let usage = model.usage, case let columns = columns(usage), !columns.isEmpty {
+            UsageStats(title: title, columns: columns, isStale: model.isStale)
+        }
+    }
+
+    private func columns(_ usage: GeminiUsage) -> [UsageColumn] {
+        if usage.sessionWindow != nil || usage.weeklyWindow != nil {
+            let session = usage.sessionWindow.map {
+                UsageColumn(label: "Session", pct: $0.usedPercent, detail: UsageColumn.resetText($0.resetsAt))
+            }
+            let week = usage.weeklyWindow.map {
+                UsageColumn(label: session == nil && title != nil ? "Gemini · Week" : "Week", pct: $0.usedPercent,
+                            detail: UsageColumn.pctDetail(UsageWindow(utilization: $0.usedPercent, resetsAt: $0.resetsAt)))
+            }
+            return [session, week].compactMap { $0 }
+        }
+        return usage.windows.map { window in
+            UsageColumn(label: window.label, pct: window.usedPercent,
+                        detail: UsageColumn.pctDetail(UsageWindow(utilization: window.usedPercent, resetsAt: window.resetsAt)))
+        }
+    }
+}
+
+struct GeminiAccountRow: View {
+    @ObservedObject var accounts: GeminiAccounts
+    var title = "Gemini account"
+    @State private var newName = ""
+    @State private var editing: AccountRow.Edit?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Row(title: title,
+                subtitle: accounts.statusText ?? accounts.mismatch) {
+                Menu(accounts.active ?? "Choose…") {
+                    ForEach(accounts.profiles, id: \.self) { name in
+                        Button(AccountStore.menuLabel(name, summary: accounts.usageByProfile[name])) {
+                            Task { await accounts.activate(name) }
+                        }
+                    }
+                    Divider()
+                    if accounts.isAddingAccount {
+                        Button("Cancel login") { accounts.cancelAdd() }
+                    } else {
+                        Button("Add account…") { Task { await accounts.addAccount() } }
+                    }
+                    if let unsaved = accounts.unsavedLogin {
+                        Button("Save current login as…") { newName = unsaved; editing = .save }
+                    }
+                    if let active = accounts.active {
+                        Button("Rename \(active)…") { newName = active; editing = .rename(active) }
+                        Button("Delete \(active)", role: .destructive) { accounts.delete(active) }
+                    }
+                    ForEach(accounts.profiles.filter { accounts.needsLogin.contains($0) }, id: \.self) { name in
+                        Button("Sign in again to \(name)…") { Task { await accounts.relogin(name) } }
+                            .disabled(accounts.isAddingAccount)
+                    }
+                }
+                .disabled(accounts.isSwitchingAccount)
+                .controlSize(.small)
+                .fixedSize()
+            }
+            .help("Applies to new sessions. Running sessions keep the current account.")
+            if let editing {
+                HStack(spacing: 6) {
+                    TextField(editing == .save ? "Profile name" : "New name", text: $newName)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .onSubmit { commit() }
+                    Button(editing == .save ? "Save" : "Rename") { commit() }
+                        .controlSize(.small)
+                }
+                .padding(.horizontal, 6)
+                .padding(.bottom, 4)
+            }
+        }
+    }
+
+    private func commit() {
+        let name = newName
+        switch editing {
+        case .save: accounts.saveCurrent(as: name)
+        case .rename(let old): Task { await accounts.rename(old, to: name) }
+        case nil: break
+        }
+        newName = ""
+        editing = nil
     }
 }

@@ -63,31 +63,125 @@ struct ProcRow: Equatable {
     let comm: String
     var arguments = ""
     var isClaude: Bool { comm == "claude" || comm.hasSuffix("/claude") }
+    var isAgy: Bool { comm == "agy" || comm.hasSuffix("/agy") }
+    var isGemini: Bool {
+        if isAgy || comm == "gemini" || comm.hasSuffix("/gemini") { return true }
+        guard comm == "node" || comm.hasSuffix("/node") else { return false }
+        return geminiArgTokens() != nil
+    }
     var agent: CodingAgent? {
         if isClaude { return .claude }
         if comm == "codex" || comm.hasSuffix("/codex") { return .codex }
+        if isGemini { return .gemini }
         return nil
     }
-    var isInteractive: Bool {
-        guard agent == .codex else { return agent == .claude }
-        let rest = arguments.hasPrefix(comm) ? String(arguments.dropFirst(comm.count)) : arguments
-        var tokens = rest.split(separator: " ").map(String.init)
-        if let first = tokens.first, (first as NSString).lastPathComponent == "codex" { tokens.removeFirst() }
-        let valueOptions: Set<String> = ["-c", "--config", "--enable", "--disable", "-C", "--cd",
-            "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval",
-            "--add-dir", "--image", "-i", "--local-provider"]
-        while let first = tokens.first {
+
+    /* Returns the CLI tokens after the gemini binary/script if this process runs Gemini CLI. */
+    private func geminiArgTokens() -> [String]? {
+        var tokens = arguments.split(separator: " ").map(String.init)
+        guard !tokens.isEmpty else { return nil }
+        let firstName = (tokens[0] as NSString).lastPathComponent
+        if firstName == "gemini" {
             tokens.removeFirst()
-            if valueOptions.contains(first) {
+            return tokens
+        }
+        guard firstName == "node" || comm == "node" || comm.hasSuffix("/node") else { return nil }
+        tokens.removeFirst()
+        let nodeValueOptions: Set<String> = ["-r", "--require", "-e", "--eval", "-p", "--print",
+            "-C", "--conditions", "--import", "--loader", "--env-file", "--max-old-space-size"]
+        while let token = tokens.first {
+            tokens.removeFirst()
+            if nodeValueOptions.contains(token) {
                 if !tokens.isEmpty { tokens.removeFirst() }
                 continue
             }
-            if first == "--version" || first == "-V" || first == "--help" || first == "-h" { return false }
-            if first.hasPrefix("-") { continue }
-            return !["app-server", "exec", "e", "review", "login", "logout", "mcp", "mcp-server",
-                     "completion", "debug", "sandbox", "apply", "cloud", "features", "help"].contains(first)
+            if token.hasPrefix("-") { continue }
+            let name = (token as NSString).lastPathComponent
+            if name == "gemini" || token.contains("/gemini-cli/") {
+                return tokens
+            }
+            return nil
         }
-        return true
+        return nil
+    }
+
+    var isInteractive: Bool {
+        switch agent {
+        case .claude:
+            return true
+        case .codex:
+            let rest = arguments.hasPrefix(comm) ? String(arguments.dropFirst(comm.count)) : arguments
+            var tokens = rest.split(separator: " ").map(String.init)
+            if let first = tokens.first, (first as NSString).lastPathComponent == "codex" { tokens.removeFirst() }
+            let valueOptions: Set<String> = ["-c", "--config", "--enable", "--disable", "-C", "--cd",
+                "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval",
+                "--add-dir", "--image", "-i", "--local-provider"]
+            while let first = tokens.first {
+                tokens.removeFirst()
+                if valueOptions.contains(first) {
+                    if !tokens.isEmpty { tokens.removeFirst() }
+                    continue
+                }
+                if first == "--version" || first == "-V" || first == "--help" || first == "-h" { return false }
+                if first.hasPrefix("-") { continue }
+                return !["app-server", "exec", "e", "review", "login", "logout", "mcp", "mcp-server",
+                         "completion", "debug", "sandbox", "apply", "cloud", "features", "help"].contains(first)
+            }
+            return true
+        case .gemini:
+            if isAgy {
+                let rest = arguments.hasPrefix(comm) ? String(arguments.dropFirst(comm.count)) : arguments
+                var tokens = rest.split(separator: " ").map(String.init)
+                if let first = tokens.first, (first as NSString).lastPathComponent == "agy" { tokens.removeFirst() }
+                let nonInteractiveFlags: Set<String> = ["-p", "--print", "--prompt", "--version", "-v", "--help", "-h"]
+                let valueOptions: Set<String> = ["--add-dir", "--agent", "--conversation", "-r", "--resume",
+                    "--effort", "-i", "--prompt-interactive", "--input-format", "--json-schema", "--log-file",
+                    "--mode", "--model", "--output-format", "--print-timeout", "--project", "--settings"]
+                while let first = tokens.first {
+                    tokens.removeFirst()
+                    if nonInteractiveFlags.contains(first) || first.hasPrefix("--print=")
+                        || first.hasPrefix("--prompt=") || first.hasPrefix("-p=") {
+                        return false
+                    }
+                    if valueOptions.contains(first) {
+                        if !tokens.isEmpty { tokens.removeFirst() }
+                        continue
+                    }
+                    if first.hasPrefix("-") { continue }
+                    return !["acp", "agent", "agents", "changelog", "help", "install", "mcp",
+                             "mic-serve", "models", "plugin", "plugins", "remote-control", "update"].contains(first)
+                }
+                return true
+            }
+            var tokens: [String]
+            if let parsed = geminiArgTokens() {
+                tokens = parsed
+            } else {
+                let rest = arguments.hasPrefix(comm) ? String(arguments.dropFirst(comm.count)) : arguments
+                tokens = rest.split(separator: " ").map(String.init)
+                if let first = tokens.first, (first as NSString).lastPathComponent == "gemini" { tokens.removeFirst() }
+            }
+            let nonInteractiveFlags: Set<String> = ["-p", "--prompt", "--version", "-v", "--help", "-h",
+                "--list-sessions", "--list-extensions", "--delete-session"]
+            let valueOptions: Set<String> = ["-m", "--model", "-r", "--resume", "-o", "--output-format",
+                "--approval-mode", "--include-directories", "--allowed-mcp-server-names",
+                "-e", "--extensions", "--policy", "-i", "--prompt-interactive"]
+            while let first = tokens.first {
+                tokens.removeFirst()
+                if nonInteractiveFlags.contains(first) || first.hasPrefix("--prompt=") || first.hasPrefix("-p=") {
+                    return false
+                }
+                if valueOptions.contains(first) {
+                    if !tokens.isEmpty { tokens.removeFirst() }
+                    continue
+                }
+                if first.hasPrefix("-") { continue }
+                return !["mcp", "extensions", "hooks", "skills", "policies"].contains(first)
+            }
+            return true
+        case nil:
+            return false
+        }
     }
 }
 
@@ -170,6 +264,11 @@ enum PrefKey {
     static let codexProfiles = "codex.profiles"
     static let codexSelectedProfile = "codex.selectedProfile"
     static let codexDefaultProfileDeleted = "codex.defaultProfileDeleted"
+    static let geminiProfiles = "gemini.profiles"
+    static let geminiActive = "gemini.active"
+    static let geminiDeletedLogin = "gemini.deletedLogin"
+    static let geminiUsageCache = "gemini.usageCache"
+    static let geminiUsageCacheAccount = "gemini.usageCacheAccount"
     static let staleDays = "worktrees.staleDays"
     static let autoClean = "worktrees.autoClean"
     static let didRequestPermissions = "didRequestPermissions"
