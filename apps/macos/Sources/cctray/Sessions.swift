@@ -13,7 +13,13 @@ struct AgentSession: Identifiable {
 
 enum Sessions {
     static func active(_ rows: [ProcRow]) -> [AgentSession] {
-        rows.filter { $0.isInteractive && $0.tty != "??" && $0.ppid != 1 }
+        let interactive = rows.filter { $0.isInteractive && $0.tty != "??" && $0.ppid != 1 }
+        let byPid = Dictionary(interactive.map { ($0.pid, $0) }, uniquingKeysWith: { first, _ in first })
+        return interactive
+            .filter { row in
+                guard let parent = byPid[row.ppid] else { return true }
+                return !(parent.agent == row.agent && parent.tty == row.tty)
+            }
             .map { AgentSession(pid: $0.pid, tty: $0.tty,
                                  elapsed: $0.elapsed, agent: $0.agent ?? .claude) }
             .sorted { ($0.elapsed, $0.tty) < ($1.elapsed, $1.tty) }
@@ -34,6 +40,10 @@ enum Sessions {
             case "f": fd = line.dropFirst()
             case "n" where fd == "cwd": cwds[pid] = String(line.dropFirst())
             case "n" where line.contains("/sessions/") && line.hasSuffix(".jsonl"):
+                transcripts[pid, default: []].append(String(line.dropFirst()))
+            case "n" where line.contains("/chats/") && (line.hasSuffix(".jsonl") || line.hasSuffix(".json")):
+                transcripts[pid, default: []].append(String(line.dropFirst()))
+            case "n" where line.contains("/presence/") && line.hasSuffix(".lock"):
                 transcripts[pid, default: []].append(String(line.dropFirst()))
             default: break
             }
@@ -76,7 +86,9 @@ final class SessionModel: ObservableObject {
     }
 
     func hookLine(_ line: String) {
-        guard discovery.claude.record(line: line), menuTimer != nil else { return }
+        let recordedClaude = discovery.claude.record(line: line)
+        let recordedGemini = discovery.gemini.record(line: line)
+        guard (recordedClaude || recordedGemini), menuTimer != nil else { return }
         Task { await refresh() }
     }
 

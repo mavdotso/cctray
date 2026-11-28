@@ -1,6 +1,6 @@
 # cctray
 
-A macOS menu bar app for Claude Code and Codex CLI. Shows usage limits, lists running
+A macOS menu bar app for Claude Code, Codex CLI, and Gemini CLI. Shows usage limits, lists running
 sessions, and jumps you back to the terminal tab that needs attention.
 
 Requires macOS 14 or later.
@@ -10,31 +10,31 @@ Requires macOS 14 or later.
 ## Features
 
 - **Usage** — session, weekly and per-model limits with reset countdowns.
-- **Sessions** — running `claude` and `codex` terminal processes, their project and conversation
+- **Sessions** — running `claude`, `codex`, and `gemini` terminal processes, their project and conversation
   title, and whether it is working or idle. Click one to focus its tab.
 - **Attention chime** — a sound and a notification when a session finishes,
   suppressed when you are already looking at that tab. **Silent alerts** in
   Settings keeps the notification and drops the sound.
 - **New Session** — configurable hotkeys start each enabled agent in your chosen
-  folder. Defaults: ⌘⌥C for Claude and ⌘⌥O for Codex.
+  folder. Defaults: ⌘⌥C for Claude, ⌘⌥O for Codex, and ⌘⌥G for Gemini.
 - **Keep Mac Awake** — blocks idle and lid-close sleep while sessions run.
 - **Pre-warm** — sends one cheap prompt when your limit window resets.
 - **Clean worktrees** — finds git worktrees with no commits for 7+ days (the
   limit is a setting) and removes them along with their Claude transcripts and
   scratchpads, on request or automatically.
-- **Accounts** — sign in once per account and switch between Claude and Codex logins.
+- **Accounts** — sign in once per account and switch between Claude, Codex, and Gemini logins.
   Saved logins renew in the background, including accounts you are not using.
 
 ## Saved logins
 
-cctray automatically saves your current Claude login and imports your current
-Codex login. Use **Add account…** in either account menu to sign in to another
+cctray automatically saves your current Claude and Gemini logins and imports your current
+Codex login. Use **Add account…** in any account menu to sign in to another
 account. Profiles stay available across app restarts, and selecting one uses its
 latest credentials for new sessions.
 
-While cctray is running, it checks saved Claude logins every minute and renews
+While cctray is running, it checks saved Claude and Gemini logins every minute and renews
 tokens within five minutes of expiry. It keeps the selected CLI login and its
-saved profile in sync, including credentials renewed by Claude Code. Switching
+saved profile in sync, including credentials renewed by the CLI. Switching
 checks and renews the destination login before applying it. Codex checks run
 every five minutes through its installed CLI, which manages and saves its own
 token refreshes. Checks also run at launch and after your Mac wakes.
@@ -96,6 +96,23 @@ for either agent's git worktrees under the configured folder, but retains Codex
 history to preserve its thread index. Orphan termination remains Claude-only
 because a background Codex process may be an app server.
 
+## Gemini
+
+Install Antigravity CLI (`agy`) or Gemini CLI (`gemini`) and sign in with your Google
+account. For `agy`, cctray reads the `gemini` / `antigravity` login keychain item and
+fetches 5-hour Session and Weekly limits from
+`daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`, installing
+`PreInvocation` and `Stop` hooks in `~/.gemini/config/hooks.json`. For `gemini`, it
+reuses `~/.gemini/oauth_creds.json` or `gemini-cli-oauth`, reads `Pro`, `Flash`, and
+`Lite` buckets from `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota`, and
+installs `BeforeAgent` and `AfterAgent` hooks in `~/.gemini/settings.json`.
+
+Enable or disable Gemini and customize its shortcut (⌘⌥G by default) under
+**Settings → Agents**. Saved Gemini profiles live in `cctray-gemini-profile-` keychain
+items and switch the active CLI credentials for new sessions. Pre-warm sends a short
+prompt (`agy -p "hi"` or `gemini -p "hi"`) after your quota window resets during active
+hours.
+
 ## Installing
 
 Build from source. There is no binary download yet. This checks out the app
@@ -120,7 +137,7 @@ that need them stop working if you decline.
 
 | Permission | Needed for |
 |---|---|
-| Accessibility | Agent hotkeys (⌘⌥C and ⌘⌥O by default), and typing into Ghostty and Warp, which have no scripting API. |
+| Accessibility | Agent hotkeys (⌘⌥C, ⌘⌥O, and ⌘⌥G by default), and typing into Ghostty and Warp, which have no scripting API. |
 | Automation | Opening tabs and focusing sessions in Terminal and iTerm2. |
 | Notifications | The attention banner. The chime works without it. |
 
@@ -131,11 +148,15 @@ removes the hook.
 
 ## Privacy
 
-cctray directly calls two Anthropic endpoints:
+cctray directly calls Anthropic and Google endpoints for enabled agents:
 
-- `api.anthropic.com/api/oauth/usage` reads your own usage numbers.
-- `platform.claude.com/v1/oauth/token` renews a saved or selected login shortly
+- `api.anthropic.com/api/oauth/usage` reads your Claude usage numbers.
+- `platform.claude.com/v1/oauth/token` renews a saved or selected Claude login shortly
   before expiry, or after a usage request rejects its access token.
+- `cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` and
+  `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` read your Gemini quota buckets.
+- `oauth2.googleapis.com/token` renews a saved or selected Gemini OAuth token shortly
+  before expiry, or after a quota request rejects its access token.
 
 It reuses the OAuth token Claude Code already stores —
 `~/.claude/.credentials.json` where Claude Code keeps one, otherwise the

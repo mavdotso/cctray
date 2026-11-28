@@ -8,10 +8,12 @@ final class LoginMaintenance {
     private var lastCodexCheck = Date.distantPast
     private let claude: AccountStore
     private let codex: CodexAccounts
+    private let gemini: GeminiAccounts
 
-    init(claude: AccountStore, codex: CodexAccounts) {
+    init(claude: AccountStore, codex: CodexAccounts, gemini: GeminiAccounts) {
         self.claude = claude
         self.codex = codex
+        self.gemini = gemini
     }
 
     func start() {
@@ -33,6 +35,7 @@ final class LoginMaintenance {
         task = Task {
             defer { task = nil }
             await claude.maintainLogins()
+            await gemini.maintainLogins()
             guard CodingAgent.codex.isEnabled else { return }
             guard force || Date().timeIntervalSince(lastCodexCheck) >= 300 else { return }
             lastCodexCheck = Date()

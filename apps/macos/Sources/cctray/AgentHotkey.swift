@@ -10,9 +10,14 @@ struct AgentHotkey: Codable, Equatable {
     static func read(for agent: CodingAgent) -> AgentHotkey {
         if let data = UserDefaults.standard.data(forKey: agent.hotkeyKey),
            let shortcut = try? JSONDecoder().decode(Self.self, from: data) { return shortcut }
-        return AgentHotkey(keyCode: agent == .claude ? 8 : 31,
+        let (keyCode, key): (UInt16, String) = switch agent {
+        case .claude: (8, "C")
+        case .codex: (31, "O")
+        case .gemini: (5, "G")
+        }
+        return AgentHotkey(keyCode: keyCode,
                            modifiers: NSEvent.ModifierFlags([.command, .option]).rawValue,
-                           key: agent == .claude ? "C" : "O")
+                           key: key)
     }
 
     var label: String {

@@ -141,15 +141,18 @@ private struct AgentSettings: View {
     @EnvironmentObject var state: AppState
     @AppStorage(CodingAgent.claude.enabledKey) private var claudeEnabled = true
     @AppStorage(CodingAgent.codex.enabledKey) private var codexEnabled = true
+    @AppStorage(CodingAgent.gemini.enabledKey) private var geminiEnabled = true
     @State private var recordingAgent: CodingAgent?
 
     var body: some View {
         Form {
             agentSection(.claude, isOn: $claudeEnabled)
             agentSection(.codex, isOn: $codexEnabled)
+            agentSection(.gemini, isOn: $geminiEnabled)
         }
         .onChange(of: claudeEnabled) { _, _ in recordingAgent = nil; state.agentSettingsChanged() }
         .onChange(of: codexEnabled) { _, _ in recordingAgent = nil; state.agentSettingsChanged() }
+        .onChange(of: geminiEnabled) { _, _ in recordingAgent = nil; state.agentSettingsChanged() }
     }
 
     private func agentSection(_ agent: CodingAgent, isOn: Binding<Bool>) -> some View {

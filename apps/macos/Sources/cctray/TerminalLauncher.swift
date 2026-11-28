@@ -51,7 +51,11 @@ enum TerminalLauncher {
     }
 
     static func sessionCommand(for dir: String?, agent: CodingAgent = .claude) -> String {
-        let command = agent == .codex ? CodexAccounts.command().trimmingCharacters(in: .whitespaces) : agent.rawValue
+        let command = switch agent {
+        case .claude: "claude"
+        case .codex: CodexAccounts.command().trimmingCharacters(in: .whitespaces)
+        case .gemini: GeminiCLI.executable
+        }
         guard let dir, !dir.isEmpty else { return command }
         return "cd '" + dir.replacingOccurrences(of: "'", with: "'\\''") + "' && " + command
     }
@@ -72,11 +76,24 @@ enum TerminalLauncher {
     }
 
     static let loginCommand = "claude auth login"
+    static var geminiLoginCommand: String { GeminiCLI.executable }
 
     @discardableResult
     static func newLogin() -> String? { open(loginCommand, in: .selected) }
 
+    @discardableResult
+    static func geminiLogin() -> String? { open(geminiLoginCommand, in: .selected) }
+
+    private static func dismissPopover() {
+        let close = {
+            NSApp.keyWindow?.orderOut(nil)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        if Thread.isMainThread { close() } else { DispatchQueue.main.sync(execute: close) }
+    }
+
     private static func open(_ command: String, in app: TerminalApp) -> String? {
+        dismissPopover()
         let scripted = appleScriptLiteral(command)
         switch app {
         case .terminal: return newTerminalSession(scripted)
@@ -139,9 +156,13 @@ enum TerminalLauncher {
     private static func typeSessionCommand(_ command: String, intoProcess name: String) -> String? {
         return runAppleScript("""
         tell application "\(name)" to activate
-        delay 0.3
         tell application "System Events"
             tell process "\(name)"
+                set tries to 0
+                repeat until frontmost or tries > 20
+                    delay 0.1
+                    set tries to tries + 1
+                end repeat
                 if (count of windows) > 0 then
                     keystroke "t" using command down
                 else

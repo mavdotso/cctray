@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 final class SessionDiscovery {
@@ -16,26 +17,107 @@ final class SessionDiscovery {
 
     private let activity = CodexActivity()
     let claude = ClaudeActivity()
+    let gemini = GeminiActivity()
 
     func scan() -> (sessions: [AgentSession], orphans: [Int32]) {
         let found = Snapshot.capture()
         var sessions = Sessions.active(found.rows).filter { $0.agent.isEnabled }
-        claude.prune(keeping: Set(sessions.map(\.pid)))
+        let activePids = Set(sessions.map(\.pid))
+        let activeTTYs = Set(sessions.map(\.tty))
+        claude.prune(keeping: activePids)
+        gemini.prune(keepingPids: activePids, ttys: activeTTYs)
         var used = Set<String>()
         for i in sessions.indices {
             sessions[i].cwd = found.cwds[sessions[i].pid] ?? ""
-            if sessions[i].agent == .claude {
+            switch sessions[i].agent {
+            case .claude:
                 if let state = claude.state(pid: sessions[i].pid) {
                     sessions[i].title = Self.head(state.transcript).flatMap(Self.titleFromTranscript)
                     sessions[i].isWorking = state.working
                 }
-            } else if let path = codexTranscriptPath(pid: sessions[i].pid, cwd: sessions[i].cwd,
-                elapsed: sessions[i].elapsed, rows: found.rows, openFiles: found.openFiles, used: &used) {
-                sessions[i].isWorking = activity.working(at: path) ?? false
-                sessions[i].title = Self.head(path).flatMap(Self.codexTitleFromTranscript)
+            case .codex:
+                if let path = codexTranscriptPath(pid: sessions[i].pid, cwd: sessions[i].cwd,
+                    elapsed: sessions[i].elapsed, rows: found.rows, openFiles: found.openFiles, used: &used) {
+                    sessions[i].isWorking = activity.working(at: path) ?? false
+                    sessions[i].title = Self.head(path).flatMap(Self.codexTitleFromTranscript)
+                }
+            case .gemini:
+                let hookState = gemini.state(pid: sessions[i].pid, tty: sessions[i].tty)
+                let transcriptPath: String? = if let t = hookState?.transcript, !t.isEmpty {
+                    t
+                } else {
+                    geminiTranscriptPath(pid: sessions[i].pid, cwd: sessions[i].cwd,
+                                         elapsed: sessions[i].elapsed, openFiles: found.openFiles, used: &used)
+                }
+                if let transcriptPath {
+                    used.insert(transcriptPath)
+                    sessions[i].title = Self.head(transcriptPath).flatMap(GeminiActivity.titleFromTranscript)
+                }
+                if let hookState {
+                    sessions[i].isWorking = hookState.working
+                } else if let transcriptPath {
+                    sessions[i].isWorking = GeminiActivity.working(at: transcriptPath) ?? false
+                }
             }
         }
         return (sessions, CodingAgent.claude.isEnabled ? Sessions.orphans(found.rows) : [])
+    }
+
+    private func geminiTranscriptPath(pid: Int32, cwd: String, elapsed: TimeInterval,
+                                      openFiles: [Int32: [String]], used: inout Set<String>) -> String? {
+        for file in openFiles[pid] ?? [] {
+            if file.contains("/presence/"), file.hasSuffix(".lock") {
+                let id = ((file as NSString).lastPathComponent as NSString).deletingPathExtension
+                let path = GeminiConfig.agyBrainDir + "/" + id + "/.system_generated/logs/transcript.jsonl"
+                if !used.contains(path), FileManager.default.fileExists(atPath: path) {
+                    return path
+                }
+            }
+            if file.contains("/chats/"), !used.contains(file) {
+                return file
+            }
+        }
+        return Self.geminiTranscript(cwd: cwd, elapsed: elapsed, used: used)
+    }
+
+    static func geminiProjectSlugs(for cwd: String, geminiDir: String = GeminiConfig.dir) -> [String] {
+        guard !cwd.isEmpty else { return [] }
+        var slugs: [String] = []
+        let projectsPath = geminiDir + "/projects.json"
+        if let data = FileManager.default.contents(atPath: projectsPath),
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let projects = obj["projects"] as? [String: String], let slug = projects[cwd], !slug.isEmpty {
+                slugs.append(slug)
+            } else if let slug = obj[cwd] as? String, !slug.isEmpty {
+                slugs.append(slug)
+            }
+        }
+        let hash = SHA256.hash(data: Data(cwd.utf8)).map { String(format: "%02x", $0) }.joined()
+        if !slugs.contains(hash) { slugs.append(hash) }
+        return slugs
+    }
+
+    static func geminiTranscript(cwd: String, elapsed: TimeInterval, used: Set<String>,
+                                 geminiDir: String = GeminiConfig.dir) -> String? {
+        guard !cwd.isEmpty else { return nil }
+        let earliest = Date().addingTimeInterval(-elapsed - 5)
+        var candidates: [(String, Date)] = []
+        for slug in geminiProjectSlugs(for: cwd, geminiDir: geminiDir) {
+            let chatsDir = URL(fileURLWithPath: geminiDir + "/tmp/" + slug + "/chats")
+            guard let files = try? FileManager.default.contentsOfDirectory(
+                at: chatsDir, includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]) else { continue }
+            for url in files {
+                let name = url.lastPathComponent
+                let ext = url.pathExtension
+                guard name.hasPrefix("session-"), (ext == "jsonl" || ext == "json"), !used.contains(url.path) else {
+                    continue
+                }
+                let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                if modified >= earliest { candidates.append((url.path, modified)) }
+            }
+        }
+        return candidates.max(by: { $0.1 < $1.1 })?.0
     }
 
     private func codexTranscriptPath(pid: Int32, cwd: String, elapsed: TimeInterval,

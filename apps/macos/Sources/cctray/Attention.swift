@@ -24,6 +24,25 @@ enum AttentionParser {
                                   message: raw["last-assistant-message"] as? String ?? "",
                                   agent: .codex)
         }
+        if obj["provider"] as? String == "agy" {
+            guard obj["tty"] as? String != "??",
+                  raw["hookEventName"] as? String == "Stop",
+                  raw["fullyIdle"] as? Bool != false,
+                  raw["terminationReason"] as? String != "USER_CANCELED" else { return nil }
+            return AttentionEvent(tty: obj["tty"] as? String ?? "",
+                                  cwd: raw["cwd"] as? String ?? "",
+                                  message: "",
+                                  agent: .gemini)
+        }
+        if obj["provider"] as? String == "gemini" {
+            guard obj["tty"] as? String != "??",
+                  raw["hook_event_name"] as? String == "AfterAgent",
+                  raw["stop_hook_active"] as? Bool != true else { return nil }
+            return AttentionEvent(tty: obj["tty"] as? String ?? "",
+                                  cwd: raw["cwd"] as? String ?? "",
+                                  message: raw["prompt_response"] as? String ?? "",
+                                  agent: .gemini)
+        }
         guard obj["tty"] as? String != "??",
               raw["hook_event_name"] as? String ?? "Stop" == "Stop", !hasAgentsRunning(raw) else { return nil }
         return AttentionEvent(tty: obj["tty"] as? String ?? "",
@@ -127,7 +146,16 @@ final class AttentionCenter: NSObject, ObservableObject, UNUserNotificationCente
             }
         }
         catch { lastError = error.localizedDescription }
-        if isOn || CodingAgent.claude.isEnabled { startWatching() } else { stopWatching() }
+        do {
+            try GeminiHook.setEnabled(CodingAgent.gemini.isEnabled)
+        } catch GeminiHook.HookError.malformedSettings {
+            let file = GeminiCLI.isAgyInstalled ? "~/.gemini/config/hooks.json" : "~/.gemini/settings.json"
+            lastError = "Gemini hook setup failed: \(file) is not valid JSON"
+        } catch {
+            let file = GeminiCLI.isAgyInstalled ? "~/.gemini/config/hooks.json" : "~/.gemini/settings.json"
+            lastError = "Gemini hook setup failed: cannot write \(file)"
+        }
+        if isOn || CodingAgent.claude.isEnabled || CodingAgent.gemini.isEnabled { startWatching() } else { stopWatching() }
     }
 
     func start() {
